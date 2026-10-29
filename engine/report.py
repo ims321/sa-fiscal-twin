@@ -1,4 +1,5 @@
 from fpdf import FPDF
+import unicodedata
 
 class PolicyReport(FPDF):
     def header(self):
@@ -16,6 +17,24 @@ class PolicyReport(FPDF):
         self.set_text_color(128)
         self.cell(0, 10, f'Page {self.page_no()}', 0, 0, 'C')
 
+def sanitize_text(text):
+    """Replaces unsupported unicode characters (like em dashes) with standard ASCII."""
+    replacements = {
+        '\u2014': '-',  # em dash
+        '\u2013': '-',  # en dash
+        '\u2018': "'",  # left single quote
+        '\u2019': "'",  # right single quote
+        '\u201c': '"',  # left double quote
+        '\u201d': '"',  # right double quote
+        '\u2022': '-',  # bullet point
+        '\u00a0': ' ',  # non-breaking space
+    }
+    for search, replace in replacements.items():
+        text = text.replace(search, replace)
+        
+    # Fallback: encode to latin-1, ignoring/replacing any other weird characters
+    return text.encode('latin-1', 'replace').decode('latin-1')
+
 def generate_pdf(ai_text, df_scenario, df_baseline, levers):
     pdf = PolicyReport()
     pdf.add_page()
@@ -25,7 +44,10 @@ def generate_pdf(ai_text, df_scenario, df_baseline, levers):
     pdf.cell(0, 10, '1. Economic Advisory Memo', ln=1)
     
     pdf.set_font('helvetica', '', 10)
+    # Clean markdown and sanitize text for PDF
     clean_text = ai_text.replace('**', '').replace('###', '').replace('*', '-')
+    clean_text = sanitize_text(clean_text)
+    
     pdf.multi_cell(0, 6, clean_text)
     pdf.ln(10)
     
@@ -56,7 +78,6 @@ def generate_pdf(ai_text, df_scenario, df_baseline, levers):
         pdf.cell(col_width, 8, str(row['Year']), border=1, align='C')
         pdf.cell(col_width, 8, f"{row['GDP']:.2f}", border=1, align='C')
         pdf.cell(col_width, 8, f"{row['Debt_to_GDP']:.1f}%", border=1, align='C')
-        # Changed from Jobs_Created to Total_Employment
         pdf.cell(col_width, 8, f"{row['Total_Employment']:,.0f}", border=1, align='C')
         pdf.cell(col_width, 8, f"{row['Net_Fiscal_mn']:,.0f}", border=1, align='C')
         pdf.ln()
