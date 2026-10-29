@@ -30,7 +30,6 @@ def init_engine():
 
 twin = init_engine()
 
-# Initialize Base Budgets
 if "base_budgets" not in st.session_state:
     st.session_state.base_budgets = fetch_live_budgets()
 base_budgets = st.session_state.base_budgets
@@ -65,23 +64,30 @@ with st.sidebar.expander("🏭 Trade & Industrial"):
 st.subheader("📊 Budget Allocation by Sphere (R mn)")
 sphere_select = st.radio("Select Sphere to Edit", ["National", "Provincial", "Local"], horizontal=True)
 
-sphere_key = sphere_select.lower()
-budget_df = pd.DataFrame(list(base_budgets[sphere_key].items()), columns=["Department", "Year 1"])
-# Duplicate Year 1 to all 5 years for the editor
-for i in range(2, 6):
-    budget_df[f"Year {i}"] = budget_df["Year 1"]
-budget_df.set_index("Department", inplace=True)
+if sphere_select == "National":
+    budget_df = pd.DataFrame(list(base_budgets['national'].items()), columns=["Department", "Year 1"])
+    for i in range(2, 6): budget_df[f"Year {i}"] = budget_df["Year 1"]
+    budget_df.set_index("Department", inplace=True)
+    edited_df = st.data_editor(budget_df, use_container_width=True, num_rows="fixed")
+    base_budgets['national'] = edited_df["Year 1"].to_dict()
+    st.session_state.base_budgets = base_budgets
 
-edited_df = st.data_editor(budget_df, use_container_width=True, num_rows="fixed", column_config={col: st.column_config.NumberColumn(format="%d") for col in budget_df.columns})
+elif sphere_select == "Provincial":
+    province = st.selectbox("Select Province", list(base_budgets['provincial'].keys()))
+    budget_df = pd.DataFrame(list(base_budgets['provincial'][province].items()), columns=["Department", "Year 1"])
+    for i in range(2, 6): budget_df[f"Year {i}"] = budget_df["Year 1"]
+    budget_df.set_index("Department", inplace=True)
+    edited_df = st.data_editor(budget_df, use_container_width=True, num_rows="fixed")
+    base_budgets['provincial'][province] = edited_df["Year 1"].to_dict()
+    st.session_state.base_budgets = base_budgets
 
-# Update session state budgets with edits
-for i in range(1, 6):
-    # Take the mean of the columns to keep it static across 5 years for simulation simplicity
-    # Or take just Year 1 for now
-    pass
-    # For simplicity, we just update the base_budgets dict with Year 1 edits
-base_budgets[sphere_key] = edited_df["Year 1"].to_dict()
-st.session_state.base_budgets = base_budgets
+else: # Local
+    budget_df = pd.DataFrame(list(base_budgets['local'].items()), columns=["Function", "Year 1"])
+    for i in range(2, 6): budget_df[f"Year {i}"] = budget_df["Year 1"]
+    budget_df.set_index("Function", inplace=True)
+    edited_df = st.data_editor(budget_df, use_container_width=True, num_rows="fixed")
+    base_budgets['local'] = edited_df["Year 1"].to_dict()
+    st.session_state.base_budgets = base_budgets
 
 # Run Simulation
 df_scenario = twin.simulate_5_years(base_budgets, st.session_state.base_budgets, levers)
