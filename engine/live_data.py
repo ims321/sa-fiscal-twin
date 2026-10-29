@@ -1,34 +1,30 @@
-import requests
-import streamlit as st
-
 def fetch_live_budgets():
-    """
-    Attempts to fetch live budget data from the Vulekamali API.
-    Falls back to the official 2024/25 National Budget figures if the API fails.
-    """
-    # Official 2024/25 budget allocations (in R millions) as a reliable fallback
-    fallback_budgets = {
-        'Health': 272000,
-        'Education': 298000,
-        'Public Works': 42000,
-        'Trade and Industry': 12000,
-        'Small Business Development': 6000
+    """Returns a dictionary of baseline budgets across all three spheres of government."""
+    # 1. National Sphere (R millions)
+    national = {
+        'The Presidency': 739, 'Parliament': 3067, 'Cooperative Governance': 131129, 'Home Affairs': 11060,
+        'International Relations': 7090, 'National Treasury': 29972, 'Public Works': 7647, 'Basic Education': 32000,
+        'Higher Education': 16000, 'Health': 62000, 'Social Development': 25000, 'Defence': 57184,
+        'Police': 113000, 'Correctional Services': 28000, 'Justice': 25368, 'Labour': 3500,
+        'Agriculture': 7610, 'Communications': 2546, 'Public Enterprises': 5000, 'Human Settlements': 34043,
+        'Water and Sanitation': 18000, 'Science and Tech': 9000, 'Tourism': 2500, 'Trade and Industry': 10000,
+        'Transport': 25000, 'Sport and Culture': 6000, 'Small Business': 6000
     }
 
-    try:
-        # Vulekamali API endpoint for departments (simplified for demonstration)
-        # In a production environment, we would map the specific budget votes.
-        response = requests.get("https://vulekamali.gov.za/api/v1/departments/", timeout=5)
-        
-        if response.status_code == 200:
-            # If the API is live, we could parse the JSON here. 
-            # For stability, we will return the latest official treasury numbers.
-            st.sidebar.success("✅ Connected to Treasury API")
-            return fallback_budgets
-        else:
-            st.sidebar.info("ℹ️ API offline. Using official 2024/25 Budget data.")
-            return fallback_budgets
-            
-    except Exception as e:
-        st.sidebar.warning("⚠️ Network issue. Using cached 2024/25 Budget data.")
-        return fallback_budgets
+    # 2. Provincial Sphere (R millions) - Aggregated across 9 provinces
+    provincial = {
+        'Provincial Health': 280000,
+        'Provincial Education': 310000,
+        'Provincial Roads': 30000,
+        'Provincial Social Dev': 15000
+    }
+
+    # 3. Local Sphere (R millions) - Aggregated across 8 major metros
+    local = {
+        'Metro Water': 35000,
+        'Metro Electricity': 45000,
+        'Metro Roads': 15000,
+        'Metro Waste': 10000
+    }
+
+    return {"national": national, "provincial": provincial, "local": local}

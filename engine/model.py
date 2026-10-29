@@ -17,111 +17,120 @@ class LeontiefTwin:
         
         self.base_gdp_zar_mn = 7_000_000  
         self.base_debt_zar_mn = 5_200_000 
-        self.interest_rate = 0.10         
         
-    def simulate_year(self, actual_budgets, base_budgets, vat_rate, cit_rate, pit_rate, tariff_shock, bbbee_share, markup_reduction, localization):
+    def simulate_year(self, budgets, base_budgets, levers):
         Y = np.zeros(len(self.sectors))
+        
+        # Mapping for all three spheres
         dept_to_sector = {
-            'Health': 'Government & Social', 'Education': 'Government & Social',
-            'Public Works': 'Construction', 'Trade and Industry': 'Business Services',
-            'Small Business Development': 'Business Services'
+            # National
+            'The Presidency': 'Government & Social', 'Parliament': 'Government & Social', 'Cooperative Governance': 'Government & Social',
+            'Home Affairs': 'Government & Social', 'International Relations': 'Government & Social', 'National Treasury': 'Government & Social',
+            'Public Works': 'Construction', 'Basic Education': 'Government & Social', 'Higher Education': 'Government & Social',
+            'Health': 'Government & Social', 'Social Development': 'Government & Social', 'Defence': 'Government & Social',
+            'Police': 'Government & Social', 'Correctional Services': 'Government & Social', 'Justice': 'Government & Social',
+            'Labour': 'Government & Social', 'Agriculture': 'Agriculture', 'Communications': 'Business Services',
+            'Public Enterprises': 'Utilities', 'Human Settlements': 'Construction', 'Water and Sanitation': 'Utilities',
+            'Science and Tech': 'Business Services', 'Tourism': 'Trade', 'Trade and Industry': 'Business Services',
+            'Transport': 'Transport', 'Sport and Culture': 'Government & Social', 'Small Business': 'Business Services',
+            # Provincial
+            'Provincial Health': 'Government & Social', 'Provincial Education': 'Government & Social',
+            'Provincial Roads': 'Construction', 'Provincial Social Dev': 'Government & Social',
+            # Local
+            'Metro Water': 'Utilities', 'Metro Electricity': 'Utilities', 'Metro Roads': 'Construction', 'Metro Waste': 'Utilities'
         }
         
-        for dept, new_total in actual_budgets.items():
-            delta = new_total - base_budgets.get(dept, 0)
-            sector = dept_to_sector.get(dept, 'Government & Social')
-            idx = self.sectors.index(sector)
-            
-            if bbbee_share > 0 and delta > 0:
-                redirect = delta * (bbbee_share / 100)
-                Y[idx] += (delta - redirect)
-                Y[self.sectors.index('Business Services')] += redirect
-            else:
-                Y[idx] += delta
+        # 1. Budget Shocks (All Spheres)
+        for sphere in ['national', 'provincial', 'local']:
+            for dept, new_total in budgets[sphere].items():
+                base_total = base_budgets[sphere].get(dept, 0)
+                delta = new_total - base_total
+                sector = dept_to_sector.get(dept, 'Government & Social')
+                idx = self.sectors.index(sector)
+                
+                if levers['bbbee'] > 0 and delta > 0:
+                    redirect = delta * (levers['bbbee'] / 100)
+                    Y[idx] += (delta - redirect)
+                    Y[self.sectors.index('Business Services')] += redirect
+                else:
+                    Y[idx] += delta
         
-        export_elasticity = -1.30
+        # 2. Trade & Industrial Shocks
         for sec in ['Agriculture', 'Mining', 'Manufacturing']:
             idx = self.sectors.index(sec)
-            export_change = 500000 * (tariff_shock / 100) * export_elasticity
+            export_change = 500000 * (levers['tariff'] / 100) * -1.30
             Y[idx] += export_change
             
-        demand_boost = 1 + (markup_reduction / 100)
-        Y = Y * demand_boost
-        
-        A_modified = self.A * (1 + (localization / 100))
+        Y = Y * (1 + (levers['markup_cap'] / 100))
+        A_modified = self.A * (1 + (levers['localization'] / 100))
         Leontief_modified = np.linalg.inv(self.I - A_modified)
         
-        vat_drag = 1 - ((vat_rate - 15) / 100 * 0.5) 
-        cit_drag = 1 - ((cit_rate - 27) / 100 * 0.3)
-        pit_drag = 1 - ((pit_rate - 30) / 100 * 0.4)
-        
+        # 3. Tax Drags on Demand
         for i, sec in enumerate(self.sectors):
             if sec in ['Trade', 'Services', 'Business Services', 'Transport']:
-                Y[i] *= vat_drag
+                Y[i] *= (1 - ((levers['vat'] - 15) / 100 * 0.5) - ((levers['fuel_levy'] - 1.0) * 0.1))
             if sec in ['Finance', 'Manufacturing', 'Construction']:
-                Y[i] *= cit_drag
+                Y[i] *= (1 - ((levers['cit'] - 27) / 100 * 0.3) - ((levers['repo_rate'] - 8.25) / 100 * 0.5))
             if sec in ['Trade', 'Services', 'Government & Social']:
-                Y[i] *= pit_drag
+                Y[i] *= (1 - ((levers['pit'] - 30) / 100 * 0.4))
 
         X = Leontief_modified @ Y
         gdp_effect = np.sum(X * self.va)
         
+        # 4. Step the ABM
         demand_shocks = {sec: 1.0 + (X[i] / 100000) for i, sec in enumerate(self.sectors)}
-        net_job_change = self.firm_market.step(cit_rate, markup_reduction, demand_shocks)
+        net_job_change = self.firm_market.step(levers['cit'], levers['markup_cap'], levers['repo_rate'], levers['eti'], demand_shocks)
         hhi = self.firm_market.calculate_hhi()
         
-        base_revenue = 550_000
-        revenue_multiplier = ((vat_rate / 15) * 0.3) + ((cit_rate / 27) * 0.2) + ((pit_rate / 30) * 0.5)
-        revenue = (base_revenue + gdp_effect * 0.1) * revenue_multiplier
+        # 5. Revenue Calculation (Base + Taxes)
+        base_rev = 1_500_000
+        rev_mult = ((levers['vat'] / 15) * 0.25) + ((levers['cit'] / 27) * 0.2) + ((levers['pit'] / 30) * 0.35) + (levers['fuel_levy'] * 0.1) + (levers['sin_tax'] * 0.1)
+        revenue = (base_rev + gdp_effect * 0.1) * rev_mult
         
-        return gdp_effect, revenue, net_job_change, hhi, pd.DataFrame({'sector': self.sectors, 'gross_output_zar_mn': X})
+        return gdp_effect, revenue, net_job_change, hhi
 
-    def simulate_5_years(self, budget_matrix, base_budgets, envelope, allow_deficit, vat_rate, cit_rate, pit_rate, tariff_shock, bbbee_share, markup_reduction, localization):
+    def simulate_5_years(self, budgets, base_budgets, levers):
         history = []
         current_debt = self.base_debt_zar_mn
         current_gdp = self.base_gdp_zar_mn
-        
         self.microsim = HouseholdSimulator()
         self.firm_market = FirmMarket(num_firms=500)
         
+        total_base_spend = sum(base_budgets['national'].values()) + sum(base_budgets['provincial'].values()) + sum(base_budgets['local'].values())
+        
         for year in range(1, 6):
-            year_budgets = budget_matrix.iloc[year-1].to_dict()
-            total_proposed = sum(year_budgets.values())
-            actual_budgets = year_budgets.copy()
-            budget_scaled = False
+            # Sum all proposed budgets
+            total_proposed = sum(budgets['national'].values()) + sum(budgets['provincial'].values()) + sum(budgets['local'].values())
+            actual_budgets = {s: budgets[s].copy() for s in budgets}
             
-            interest_payment = current_debt * self.interest_rate if year > 1 else 0
-            effective_envelope = envelope - interest_payment
+            interest = current_debt * (levers['repo_rate'] / 100) if year > 1 else 0
             
-            if total_proposed > effective_envelope and not allow_deficit:
-                scale_factor = effective_envelope / total_proposed if total_proposed > 0 else 1
-                actual_budgets = {k: v * scale_factor for k, v in year_budgets.items()}
-                total_proposed = effective_envelope
-                budget_scaled = True
+            # If not allowing deficit, scale down budgets
+            if total_proposed > (total_base_spend + 50000) and not levers['allow_deficit']: # 50bn buffer
+                scale = (total_base_spend + 50000) / total_proposed
+                for s in actual_budgets:
+                    for k in actual_budgets[s]:
+                        actual_budgets[s][k] *= scale
+                total_proposed = total_base_spend + 50000
+                
+            budget_change = total_proposed - total_base_spend
+            gdp_effect, revenue, net_job_change, hhi = self.simulate_year(actual_budgets, base_budgets, levers)
             
-            budget_change = total_proposed - sum(base_budgets.values())
-            
-            gdp_effect, revenue, net_job_change, hhi, _ = self.simulate_year(
-                actual_budgets, base_budgets, vat_rate, cit_rate, pit_rate, tariff_shock, bbbee_share, markup_reduction, localization
-            )
-            
-            net_fiscal = revenue - budget_change
+            net_fiscal = revenue - budget_change - interest
             current_debt -= net_fiscal 
             current_gdp = current_gdp * 1.015 + gdp_effect 
             
-            self.microsim.households = self.microsim.apply_policy_shocks(net_job_change, vat_rate, pit_rate)
-            micro_metrics = self.microsim.get_metrics(self.microsim.households)
+            self.microsim.households = self.microsim.apply_policy_shocks(net_job_change, levers['vat'], levers['pit'], levers['grant_uplift'], levers['min_wage'], levers['fuel_levy'])
+            micro = self.microsim.get_metrics(self.microsim.households)
             
             history.append({
                 "Year": f"Year {year}",
                 "GDP": current_gdp / 1_000_000,
-                "Debt": current_debt / 1_000_000,
                 "Debt_to_GDP": (current_debt / current_gdp) * 100,
-                "Net_Jobs": net_job_change,
                 "Total_Employment": self.firm_market.get_total_employment() * 1000,
                 "Net_Fiscal_mn": net_fiscal,
-                "Gini": micro_metrics["current_gini"],
-                "Poverty_Rate": micro_metrics["current_poverty"],
+                "Gini": micro["current_gini"],
+                "Poverty_Rate": micro["current_poverty"],
                 "HHI": hhi
             })
             
@@ -130,57 +139,12 @@ class LeontiefTwin:
     def ask_ai_advisor(self, query, scenario_data):
         base_url = os.getenv("OMNIROUTE_BASE_URL", "http://localhost:20128/v1")
         api_key = os.getenv("OMNIROUTE_API_KEY", "optional")
+        final = scenario_data.iloc[-1]
         
-        final_year = scenario_data.iloc[-1]
-        summary = f"""
-        - Year 5 GDP: R {final_year['GDP']:.2f} Trillion
-        - Year 5 Debt-to-GDP: {final_year['Debt_to_GDP']:.1f}%
-        - Year 5 Total Employment: {final_year['Total_Employment']:,.0f} workers
-        - Year 5 Gini Coefficient: {final_year['Gini']:.3f}
-        - Year 5 Poverty Rate: {final_year['Poverty_Rate']:.1f}%
-        - Year 5 Market Concentration (HHI): {final_year['HHI']:.0f}
-        """
-        
-        system_prompt = f"""
-        You are a Chief Economist advising the South African National Treasury.
-        Here is the final 5-year macroeconomic simulation data based on the policy changes:
-        {summary}
-        
-        Answer the user's question professionally. Focus on trade-offs between GDP, Debt, Employment, Inequality, and Market Concentration. Keep it concise (under 250 words).
-        """
+        prompt = f"Year 5 Data: GDP R{final['GDP']:.2f}T, Debt {final['Debt_to_GDP']:.1f}%, Poverty {final['Poverty_Rate']:.1f}%, HHI {final['HHI']:.0f}. Answer: {query}"
         
         try:
-            response = requests.post(
-                f"{base_url}/chat/completions",
-                headers={"Authorization": f"Bearer {api_key}"},
-                json={
-                    "model": "auto",
-                    "messages": [
-                        {"role": "system", "content": system_prompt},
-                        {"role": "user", "content": query}
-                    ],
-                    "temperature": 0.3
-                },
-                timeout=300 # Increased to 5 minutes
-            )
-            return response.json()["choices"][0]["message"]["content"]
+            res = requests.post(f"{base_url}/chat/completions", headers={"Authorization": f"Bearer {api_key}"}, json={"model": "auto", "messages": [{"role": "system", "content": "You are a Chief Economist advising Treasury. Keep answers under 250 words."}, {"role": "user", "content": prompt}], "temperature": 0.3}, timeout=300)
+            return res.json()["choices"][0]["message"]["content"]
         except Exception as e:
-            # Fallback memo if the local AI takes too long
-            return f"""
-MEMORANDUM
-
-TO: Cabinet
-FROM: Chief Economist, National Treasury
-SUBJECT: Simulation Results Analysis
-
-The economic engine has successfully simulated your policy levers over a 5-year horizon. 
-
-Key Outcomes:
-- Year 5 GDP: R {final_year['GDP']:.2f} Trillion
-- Debt-to-GDP: {final_year['Debt_to_GDP']:.1f}%
-- Poverty Rate: {final_year['Poverty_Rate']:.1f}%
-
-Note: The AI Advisor timed out while trying to generate a custom narrative for this specific scenario. However, the simulated data remains accurate. Please review the charts in the dashboard for sectoral and household impacts.
-
-(Technical Error: {e})
-            """
+            return f"AI unavailable: {e}"
