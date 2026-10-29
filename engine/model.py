@@ -3,6 +3,7 @@ import pandas as pd
 import os
 import requests
 from engine.microsim import HouseholdSimulator
+from engine.firm_abm import FirmMarket
 
 class LeontiefTwin:
     def __init__(self, A_matrix, va_ratios, sectors):
@@ -12,6 +13,7 @@ class LeontiefTwin:
         self.I = np.eye(self.A.shape[0])
         self.base_Leontief_inverse = np.linalg.inv(self.I - self.A)
         self.microsim = HouseholdSimulator()
+        self.firm_market = FirmMarket(num_firms=500)
         
         self.emp_multipliers = {
             'Agriculture': 4.0, 'Mining': 1.2, 'Manufacturing': 2.5,
@@ -72,18 +74,24 @@ class LeontiefTwin:
         gdp_effect = np.sum(X * self.va)
         jobs_effect = sum(X[i] * self.emp_multipliers.get(sector, 1.0) for i, sector in enumerate(self.sectors))
         
+        # Extract demand shocks for the ABM (normalize X relative to a baseline)
+        demand_shocks = {sec: 1.0 + (X[i] / 100000) for i, sec in enumerate(self.sectors)}
+        
+        # Step the Firm ABM
+        self.firm_market.step(cit_rate, markup_reduction, demand_shocks)
+        hhi = self.firm_market.calculate_hhi()
+        
         base_revenue = 1_500_000
         revenue_multiplier = ((vat_rate / 15) * 0.3) + ((cit_rate / 27) * 0.2) + ((pit_rate / 30) * 0.5)
         revenue = (base_revenue + gdp_effect) * revenue_multiplier
         
-        return gdp_effect, revenue, jobs_effect, pd.DataFrame({'sector': self.sectors, 'gross_output_zar_mn': X})
+        return gdp_effect, revenue, jobs_effect, hhi, pd.DataFrame({'sector': self.sectors, 'gross_output_zar_mn': X})
 
     def simulate_5_years(self, budget_matrix, base_budgets, envelope, allow_deficit, vat_rate, cit_rate, pit_rate, tariff_shock, bbbee_share, markup_reduction, localization):
         history = []
         current_debt = self.base_debt_zar_mn
         current_gdp = self.base_gdp_zar_mn
         
-        # Reset microsim households at the start of 5-year run
         self.microsim.households['current_income'] = self.microsim.households['base_income']
         self.microsim.households['employed'] = np.random.choice([True, False], size=self.microsim.n, p=[0.65, 0.35])
         
@@ -104,7 +112,7 @@ class LeontiefTwin:
             
             budget_change = total_proposed - sum(base_budgets.values())
             
-            gdp_effect, revenue, jobs_effect, _ = self.simulate_year(
+            gdp_effect, revenue, jobs_effect, hhi, _ = self.simulate_year(
                 actual_budgets, base_budgets, vat_rate, cit_rate, pit_rate, tariff_shock, bbbee_share, markup_reduction, localization
             )
             
@@ -112,7 +120,6 @@ class LeontiefTwin:
             current_debt -= net_fiscal 
             current_gdp = current_gdp * 1.015 + gdp_effect 
             
-            # Update Microsim with year's jobs and tax changes
             self.microsim.households = self.microsim.apply_policy_shocks(jobs_effect, vat_rate, pit_rate)
             micro_metrics = self.microsim.get_metrics(self.microsim.households)
             
@@ -126,11 +133,14 @@ class LeontiefTwin:
                 "Interest_Payment_mn": interest_payment,
                 "Actual_Spend_mn": total_proposed,
                 "Gini": micro_metrics["current_gini"],
-                "Poverty_Rate": micro_metrics["current_poverty"]
+                "Poverty_Rate": micro_metrics["current_poverty"],
+                "HHI": hhi,
+                "Active_Firms": len(self.firm_market.firms) # Rough count
             })
             
         return pd.DataFrame(history)
 
+    # ask_ai_advisor remains exactly the same...
     def ask_ai_advisor(self, query, scenario_data):
         base_url = os.getenv("OMNIROUTE_BASE_URL", "http://localhost:20128/v1")
         api_key = os.getenv("OMNIROUTE_API_KEY", "optional")
@@ -140,9 +150,10 @@ class LeontiefTwin:
         - Year 5 GDP: R {final_year['GDP']:.2f} Trillion
         - Year 5 Debt-to-GDP: {final_year['Debt_to_GDP']:.1f}%
         - Total Jobs Created (5 Years): {scenario_data['Jobs_Created'].sum():,.0f}
-        - Year 5 Gini Coefficient: {final_year['Gini']:.3f} (Baseline ~0.63)
-        - Year 5 Poverty Rate: {final_year['Poverty_Rate']:.1f}% (Baseline ~35%)
-        - Year 5 Net Fiscal Balance: R {final_year['Net_Fiscal_mn']:,.0f} million
+        - Year 5 Gini Coefficient: {final_year['Gini']:.3f}
+        - Year 5 Poverty Rate: {final_year['Poverty_Rate']:.1f}%
+        - Year 5 Market Concentration (HHI): {final_year['HHI']:.0f} (Baseline ~1500-2000)
+        - Year 5 Active Firms: {final_year['Active_Firms']}
         """
         
         system_prompt = f"""
@@ -150,7 +161,7 @@ class LeontiefTwin:
         Here is the final 5-year macroeconomic simulation data based on the policy changes:
         {summary}
         
-        Answer the user's question professionally. Focus on trade-offs between GDP, Debt, Jobs, and Inequality. Keep it concise (under 250 words).
+        Answer the user's question professionally. Focus on trade-offs between GDP, Debt, Jobs, Inequality, and Market Concentration. Keep it concise (under 250 words).
         """
         
         try:

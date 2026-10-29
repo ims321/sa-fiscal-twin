@@ -23,7 +23,7 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 st.title("🇿🇦 South Africa Macroeconomic Twin")
-st.caption("Macro-Fiscal Simulation with Live Treasury Data & Microsimulation")
+st.caption("Macro-Fiscal + Microsimulation + Agent-Based Firm Dynamics")
 
 @st.cache_resource
 def init_engine():
@@ -32,18 +32,15 @@ def init_engine():
 
 twin = init_engine()
 
-# --- FETCH LIVE DATA ---
 st.sidebar.header("🏦 Data Source")
 if "base_budgets" not in st.session_state:
     st.session_state.base_budgets = fetch_live_budgets()
-
 if st.sidebar.button("🔄 Refresh Treasury Data"):
     st.session_state.base_budgets = fetch_live_budgets()
     st.rerun()
 
 base_budgets = st.session_state.base_budgets
 
-# --- SIDEBAR CONTROLS ---
 st.sidebar.header("⚙️ Fiscal Rules")
 envelope = st.sidebar.number_input("Base Envelope (R mn)", value=sum(base_budgets.values()), step=10000)
 allow_deficit = st.sidebar.toggle("Allow Deficit Spending", value=True)
@@ -98,6 +95,25 @@ with col_chart2:
     st.plotly_chart(fig_debt, use_container_width=True)
 
 st.divider()
+st.subheader("🏢 Firm Dynamics & Market Concentration (Agent-Based Model)")
+
+col_firm1, col_firm2 = st.columns(2)
+with col_firm1:
+    # Firm size distribution
+    active_firms_df = pd.DataFrame([f.to_dict() for f in twin.firm_market.firms if f.active])
+    fig_firms = px.scatter(active_firms_df, x="productivity", y="employees", size="market_share", color="sector", 
+                           title="Active Firms: Productivity vs Employment Size", template="plotly_white")
+    st.plotly_chart(fig_firms, use_container_width=True)
+
+with col_firm2:
+    fig_hhi = go.Figure()
+    fig_hhi.add_trace(go.Scatter(x=df_baseline["Year"], y=df_baseline["HHI"], mode='lines', name='Baseline HHI', line=dict(dash='dot', color='gray')))
+    fig_hhi.add_trace(go.Scatter(x=df_scenario["Year"], y=df_scenario["HHI"], mode='lines+markers', name='Scenario HHI', line=dict(color='#9b59b6', width=4)))
+    fig_hhi.add_hline(y=1500, line_dash="dash", line_color="green", annotation_text="Competitive Threshold")
+    fig_hhi.update_layout(title="Market Concentration (HHI)", template="plotly_white")
+    st.plotly_chart(fig_hhi, use_container_width=True)
+
+st.divider()
 st.subheader("🏘️ Household Income Distribution (Microsimulation)")
 income_df = twin.microsim.households[['current_income']]
 fig_dist = px.histogram(income_df, x="current_income", nbins=100, title="Simulated Household Income Distribution", labels={'current_income': 'Annual Household Income (R)'}, color_discrete_sequence=['#3498db'])
@@ -106,7 +122,7 @@ st.plotly_chart(fig_dist, use_container_width=True)
 
 st.divider()
 with st.expander("💾 Save this Scenario to the Database"):
-    scenario_name = st.text_input("Scenario Name", "Live Data Scenario")
+    scenario_name = st.text_input("Scenario Name", "ABM Scenario")
     if st.button("Save to Supabase"):
         supabase = get_supabase()
         if supabase:
@@ -138,7 +154,7 @@ for i, message in enumerate(st.session_state.messages):
                 file_name=f"Cabinet_Memorandum_{i}.pdf", mime="application/pdf", key=f"download_hist_{i}"
             )
 
-if prompt := st.chat_input("Ask about trade-offs, inequality, or debt..."):
+if prompt := st.chat_input("Ask about firm dynamics, competition, inequality, or debt..."):
     st.session_state.messages.append({"role": "user", "content": prompt})
     with st.chat_message("user"):
         st.markdown(prompt)
