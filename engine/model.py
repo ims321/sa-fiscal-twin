@@ -16,10 +16,9 @@ class LeontiefTwin:
             'Government & Social': 3.8
         }
         
-        # Macro baselines for South Africa
-        self.base_gdp_zar_mn = 7_000_000  # R7 Trillion
-        self.base_debt_zar_mn = 5_200_000 # R5.2 Trillion
-        self.interest_rate = 0.10         # 10% average cost of debt
+        self.base_gdp_zar_mn = 7_000_000  
+        self.base_debt_zar_mn = 5_200_000 
+        self.interest_rate = 0.10         
         
     def simulate_year(self, actual_budgets, base_budgets, tax_rate, tariff_shock, bbbee_share):
         Y = np.zeros(len(self.sectors))
@@ -57,8 +56,6 @@ class LeontiefTwin:
     def simulate_5_years(self, proposed_budgets, base_budgets, envelope, allow_deficit, tax_rate, tariff_shock, bbbee_share):
         history = []
         current_debt = self.base_debt_zar_mn
-        
-        # Assume a baseline GDP growth of 1.5% per year even without shocks
         current_gdp = self.base_gdp_zar_mn
         
         for year in range(1, 6):
@@ -66,7 +63,6 @@ class LeontiefTwin:
             actual_budgets = proposed_budgets.copy()
             budget_scaled = False
             
-            # Deduct interest payments from the envelope for years > 1
             interest_payment = current_debt * self.interest_rate if year > 1 else 0
             effective_envelope = envelope - interest_payment
             
@@ -85,15 +81,13 @@ class LeontiefTwin:
             )
             
             net_fiscal = revenue - budget_change
-            
-            # Update debt and GDP for next year
             current_debt -= net_fiscal 
             current_gdp = current_gdp * 1.015 + gdp_effect 
             
             history.append({
                 "Year": f"Year {year}",
-                "GDP": current_gdp / 1_000_000, # In Trillions
-                "Debt": current_debt / 1_000_000, # In Trillions
+                "GDP": current_gdp / 1_000_000,
+                "Debt": current_debt / 1_000_000,
                 "Debt_to_GDP": (current_debt / current_gdp) * 100,
                 "Jobs_Created": jobs_effect,
                 "Net_Fiscal_mn": net_fiscal,

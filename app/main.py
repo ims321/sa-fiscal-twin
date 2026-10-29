@@ -11,7 +11,7 @@ from engine.model import LeontiefTwin
 st.set_page_config(page_title="SA Fiscal Twin", layout="wide")
 st.title("South Africa Fiscal–Economic Twin")
 
-@st.cache_resource # Changed from cache_data to cache_resource
+@st.cache_resource
 def init_engine():
     A, va, sectors = load_twin_data()
     return LeontiefTwin(A, va, sectors)
