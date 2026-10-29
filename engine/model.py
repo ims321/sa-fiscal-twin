@@ -2,6 +2,7 @@ import numpy as np
 import pandas as pd
 import os
 import requests
+import copy
 from engine.microsim import HouseholdSimulator
 from engine.firm_abm import FirmMarket
 
@@ -18,7 +19,6 @@ class LeontiefTwin:
         self.base_gdp_zar_mn = 7_000_000  
         self.base_debt_zar_mn = 5_200_000 
         
-        # Comprehensive mapping of all departments/functions to economic sectors
         self.dept_to_sector = {
             'The Presidency': 'Government & Social', 'Parliament': 'Government & Social', 'Cooperative Governance': 'Government & Social',
             'Home Affairs': 'Government & Social', 'International Relations': 'Government & Social', 'National Treasury': 'Government & Social',
@@ -29,17 +29,18 @@ class LeontiefTwin:
             'Public Enterprises': 'Utilities', 'Human Settlements': 'Construction', 'Water and Sanitation': 'Utilities',
             'Science and Tech': 'Business Services', 'Tourism': 'Trade', 'Trade and Industry': 'Business Services',
             'Transport': 'Transport', 'Sport and Culture': 'Government & Social', 'Small Business': 'Business Services',
-            # Provincial mapping
-            'Health (Prov)': 'Government & Social', 'Education (Prov)': 'Government & Social', 'Roads': 'Construction', 'Social Dev': 'Government & Social', 'Agriculture (Prov)': 'Agriculture',
-            # Local mapping
-            'Water': 'Utilities', 'Electricity': 'Utilities', 'Roads & Transport': 'Construction', 'Waste Management': 'Utilities',
-            'Community & Public Safety': 'Government & Social', 'Health & Environmental': 'Government & Social', 'Housing & Planning': 'Construction'
+            # Provincial
+            'Roads & Transport': 'Construction', 'Treasury': 'Government & Social', 'Community Safety': 'Government & Social', 
+            'Economic Dev': 'Business Services', 'Cooperative Gov': 'Government & Social', 'Sport & Culture': 'Government & Social',
+            # Local
+            'Water': 'Utilities', 'Electricity': 'Utilities', 'Roads & Stormwater': 'Construction', 'Waste Management': 'Utilities',
+            'Housing & Planning': 'Construction'
         }
         
     def simulate_year(self, budgets, base_budgets, levers):
         Y = np.zeros(len(self.sectors))
         
-        # 1. National Sphere Shocks
+        # 1. National Shocks
         for dept, new_total in budgets['national'].items():
             delta = new_total - base_budgets['national'].get(dept, 0)
             sector = self.dept_to_sector.get(dept, 'Government & Social')
@@ -51,30 +52,30 @@ class LeontiefTwin:
             else:
                 Y[idx] += delta
         
-        # 2. Provincial Sphere Shocks
+        # 2. Provincial Shocks
         for prov, depts in budgets['provincial'].items():
             for dept, new_total in depts.items():
                 delta = new_total - base_budgets['provincial'].get(prov, {}).get(dept, 0)
                 sector = self.dept_to_sector.get(dept, 'Government & Social')
                 Y[self.sectors.index(sector)] += delta
         
-        # 3. Local Sphere Shocks
-        for func, new_total in budgets['local'].items():
-            delta = new_total - base_budgets['local'].get(func, 0)
-            sector = self.dept_to_sector.get(func, 'Government & Social')
-            Y[self.sectors.index(sector)] += delta
+        # 3. Local Shocks
+        for mun, funcs in budgets['local'].items():
+            for func, new_total in funcs.items():
+                delta = new_total - base_budgets['local'].get(mun, {}).get(func, 0)
+                sector = self.dept_to_sector.get(func, 'Government & Social')
+                Y[self.sectors.index(sector)] += delta
 
-        # 4. Trade & Industrial Shocks
+        # 4. Trade & Industrial
         for sec in ['Agriculture', 'Mining', 'Manufacturing']:
             idx = self.sectors.index(sec)
-            export_change = 500000 * (levers['tariff'] / 100) * -1.30
-            Y[idx] += export_change
+            Y[idx] += 500000 * (levers['tariff'] / 100) * -1.30
             
         Y = Y * (1 + (levers['markup_cap'] / 100))
         A_modified = self.A * (1 + (levers['localization'] / 100))
         Leontief_modified = np.linalg.inv(self.I - A_modified)
         
-        # 5. Tax Drags on Demand
+        # 5. Tax Drags
         for i, sec in enumerate(self.sectors):
             if sec in ['Trade', 'Services', 'Business Services', 'Transport']:
                 Y[i] *= (1 - ((levers['vat'] - 15) / 100 * 0.5) - ((levers['fuel_levy'] - 1.0) * 0.1))
@@ -86,12 +87,12 @@ class LeontiefTwin:
         X = Leontief_modified @ Y
         gdp_effect = np.sum(X * self.va)
         
-        # 6. Step the ABM
+        # 6. ABM
         demand_shocks = {sec: 1.0 + (X[i] / 100000) for i, sec in enumerate(self.sectors)}
         net_job_change = self.firm_market.step(levers['cit'], levers['markup_cap'], levers['repo_rate'], levers['eti'], demand_shocks)
         hhi = self.firm_market.calculate_hhi()
         
-        # 7. Revenue Calculation
+        # 7. Revenue
         base_rev = 1_500_000
         rev_mult = ((levers['vat'] / 15) * 0.25) + ((levers['cit'] / 27) * 0.2) + ((levers['pit'] / 30) * 0.35) + (levers['fuel_levy'] * 0.1) + (levers['sin_tax'] * 0.1)
         revenue = (base_rev + gdp_effect * 0.1) * rev_mult
@@ -105,37 +106,31 @@ class LeontiefTwin:
         self.microsim = HouseholdSimulator()
         self.firm_market = FirmMarket(num_firms=500)
         
-        # Calculate total base spending across all spheres
-        total_base_spend = sum(base_budgets['national'].values())
-        for prov in base_budgets['provincial'].values():
-            total_base_spend += sum(prov.values())
-        total_base_spend += sum(base_budgets['local'].values())
+        # Calculate total base spending
+        total_base = sum(base_budgets['national'].values())
+        for p in base_budgets['provincial'].values(): total_base += sum(p.values())
+        for m in base_budgets['local'].values(): total_base += sum(m.values())
         
         for year in range(1, 6):
-            # Calculate total proposed spending
             total_proposed = sum(budgets['national'].values())
-            for prov in budgets['provincial'].values():
-                total_proposed += sum(prov.values())
-            total_proposed += sum(budgets['local'].values())
+            for p in budgets['provincial'].values(): total_proposed += sum(p.values())
+            for m in budgets['local'].values(): total_proposed += sum(m.values())
             
             interest = current_debt * (levers['repo_rate'] / 100) if year > 1 else 0
             
-            # If not allowing deficit, scale down proportionally
-            if total_proposed > (total_base_spend + 50000) and not levers['allow_deficit']:
-                scale = (total_base_spend + 50000) / total_proposed
-                # Deep copy and scale
-                import copy
+            if total_proposed > (total_base + 50000) and not levers['allow_deficit']:
+                scale = (total_base + 50000) / total_proposed
                 actual_budgets = copy.deepcopy(budgets)
                 for k in actual_budgets['national']: actual_budgets['national'][k] *= scale
                 for p in actual_budgets['provincial']:
                     for k in actual_budgets['provincial'][p]: actual_budgets['provincial'][p][k] *= scale
-                for k in actual_budgets['local']: actual_budgets['local'][k] *= scale
-                total_proposed = total_base_spend + 50000
+                for m in actual_budgets['local']:
+                    for k in actual_budgets['local'][m]: actual_budgets['local'][m][k] *= scale
+                total_proposed = total_base + 50000
             else:
-                import copy
                 actual_budgets = copy.deepcopy(budgets)
                 
-            budget_change = total_proposed - total_base_spend
+            budget_change = total_proposed - total_base
             gdp_effect, revenue, net_job_change, hhi = self.simulate_year(actual_budgets, base_budgets, levers)
             
             net_fiscal = revenue - budget_change - interest
@@ -162,7 +157,6 @@ class LeontiefTwin:
         base_url = os.getenv("OMNIROUTE_BASE_URL", "http://localhost:20128/v1")
         api_key = os.getenv("OMNIROUTE_API_KEY", "optional")
         final = scenario_data.iloc[-1]
-        
         prompt = f"Year 5 Data: GDP R{final['GDP']:.2f}T, Debt {final['Debt_to_GDP']:.1f}%, Poverty {final['Poverty_Rate']:.1f}%, HHI {final['HHI']:.0f}. Answer: {query}"
         
         try:

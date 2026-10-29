@@ -1,6 +1,4 @@
 def fetch_live_budgets():
-    """Returns a comprehensive dictionary of baseline budgets for all three spheres."""
-    
     # 1. National Sphere (R millions)
     national = {
         'The Presidency': 739, 'Parliament': 3067, 'Cooperative Governance': 131129, 'Home Affairs': 11060,
@@ -12,29 +10,31 @@ def fetch_live_budgets():
         'Transport': 25000, 'Sport and Culture': 6000, 'Small Business': 6000
     }
 
-    # 2. Provincial Sphere (R millions) - All 9 Provinces with standard departments
-    provincial = {
-        'Eastern Cape': {'Health': 25000, 'Education': 38000, 'Roads': 4000, 'Social Dev': 2500, 'Agriculture': 1500},
-        'Free State': {'Health': 12000, 'Education': 15000, 'Roads': 2500, 'Social Dev': 1200, 'Agriculture': 800},
-        'Gauteng': {'Health': 55000, 'Education': 60000, 'Roads': 6000, 'Social Dev': 5000, 'Agriculture': 1000},
-        'KwaZulu-Natal': {'Health': 48000, 'Education': 58000, 'Roads': 5500, 'Social Dev': 4500, 'Agriculture': 2000},
-        'Limpopo': {'Health': 22000, 'Education': 35000, 'Roads': 3500, 'Social Dev': 2200, 'Agriculture': 1500},
-        'Mpumalanga': {'Health': 15000, 'Education': 22000, 'Roads': 3000, 'Social Dev': 1800, 'Agriculture': 1200},
-        'Northern Cape': {'Health': 5000, 'Education': 7000, 'Roads': 1500, 'Social Dev': 800, 'Agriculture': 600},
-        'North West': {'Health': 14000, 'Education': 18000, 'Roads': 2800, 'Social Dev': 1500, 'Agriculture': 1000},
-        'Western Cape': {'Health': 28000, 'Education': 25000, 'Roads': 4500, 'Social Dev': 3000, 'Agriculture': 2000}
+    # 2. Provincial Sphere - 12 Departments per Province
+    prov_depts = ['Health', 'Education', 'Roads & Transport', 'Social Development', 'Agriculture', 'Public Works', 'Treasury', 'Community Safety', 'Human Settlements', 'Sport & Culture', 'Economic Dev', 'Cooperative Gov']
+    provinces = ['Eastern Cape', 'Free State', 'Gauteng', 'KwaZulu-Natal', 'Limpopo', 'Mpumalanga', 'Northern Cape', 'North West', 'Western Cape']
+    
+    provincial = {prov: {dept: 1500 for dept in prov_depts} for prov in provinces}
+    # Adjust baselines roughly to reality
+    provincial['Gauteng']['Health'] = 55000; provincial['Gauteng']['Education'] = 60000
+    provincial['KwaZulu-Natal']['Health'] = 48000; provincial['KwaZulu-Natal']['Education'] = 58000
+    provincial['Western Cape']['Health'] = 28000; provincial['Western Cape']['Education'] = 25000
+    provincial['Eastern Cape']['Health'] = 25000; provincial['Eastern Cape']['Education'] = 38000
+
+    # 3. Local Sphere - Metros & District Municipalities
+    mun_depts = ['Water', 'Electricity', 'Roads & Stormwater', 'Waste Management', 'Community Safety', 'Housing & Planning']
+    municipalities = {
+        'City of Johannesburg': {dept: 3500 for dept in mun_depts},
+        'City of Cape Town': {dept: 3000 for dept in mun_depts},
+        'eThekwini': {dept: 2800 for dept in mun_depts},
+        'City of Tshwane': {dept: 2500 for dept in mun_depts},
+        'Ekurhuleni': {dept: 2200 for dept in mun_depts},
+        'Nelson Mandela Bay': {dept: 1500 for dept in mun_depts},
+        'Buffalo City': {dept: 1200 for dept in mun_depts},
+        'Mangaung': {dept: 1100 for dept in mun_depts},
+        'Amathole District': {dept: 800 for dept in mun_depts},
+        'Cape Winelands': {dept: 700 for dept in mun_depts}
+        # In a production environment, we would add the remaining 247 municipalities here
     }
 
-    # 3. Local Sphere (R millions) - Aggregated by standard municipal functions
-    # This represents the consolidated budgets of all 257 municipalities.
-    local = {
-        'Water': 45000,
-        'Electricity': 55000,
-        'Roads & Transport': 20000,
-        'Waste Management': 12000,
-        'Community & Public Safety': 18000,
-        'Health & Environmental': 8000,
-        'Housing & Planning': 15000
-    }
-
-    return {"national": national, "provincial": provincial, "local": local}
+    return {"national": national, "provincial": provincial, "local": municipalities}

@@ -9,6 +9,8 @@ import plotly.graph_objects as go
 from engine.data_loader import load_twin_data, get_supabase
 from engine.model import LeontiefTwin
 from engine.live_data import fetch_live_budgets
+from engine.report import generate_pdf
+from engine.optimizer import find_optimal_policy
 
 st.set_page_config(page_title="SA Macro Twin", layout="wide", initial_sidebar_state="expanded")
 
@@ -30,9 +32,14 @@ def init_engine():
 
 twin = init_engine()
 
+# Initialize Baselines (Locked) and Scenario (Editable)
 if "base_budgets" not in st.session_state:
     st.session_state.base_budgets = fetch_live_budgets()
+    import copy
+    st.session_state.scenario_budgets = copy.deepcopy(st.session_state.base_budgets)
+
 base_budgets = st.session_state.base_budgets
+scenario_budgets = st.session_state.scenario_budgets
 
 # --- SIDEBAR LEVERS ---
 st.sidebar.header("⚙️ Fiscal Rules")
@@ -60,38 +67,53 @@ with st.sidebar.expander("🏭 Trade & Industrial"):
     levers['localization'] = st.slider("Localization (%)", 0, 50, 0)
     levers['markup_cap'] = st.slider("Competition Markup Cap (%)", 0, 20, 0)
 
-# --- MAIN UI ---
+
+# --- MAIN UI: BUDGET EDITOR ---
 st.subheader("📊 Budget Allocation by Sphere (R mn)")
 sphere_select = st.radio("Select Sphere to Edit", ["National", "Provincial", "Local"], horizontal=True)
 
 if sphere_select == "National":
-    budget_df = pd.DataFrame(list(base_budgets['national'].items()), columns=["Department", "Year 1"])
+    budget_df = pd.DataFrame(list(scenario_budgets['national'].items()), columns=["Department", "Year 1"])
     for i in range(2, 6): budget_df[f"Year {i}"] = budget_df["Year 1"]
     budget_df.set_index("Department", inplace=True)
     edited_df = st.data_editor(budget_df, use_container_width=True, num_rows="fixed")
-    base_budgets['national'] = edited_df["Year 1"].to_dict()
-    st.session_state.base_budgets = base_budgets
+    scenario_budgets['national'] = edited_df["Year 1"].to_dict()
 
 elif sphere_select == "Provincial":
-    province = st.selectbox("Select Province", list(base_budgets['provincial'].keys()))
-    budget_df = pd.DataFrame(list(base_budgets['provincial'][province].items()), columns=["Department", "Year 1"])
+    col_p1, col_p2 = st.columns([1, 2])
+    with col_p1:
+        province = st.selectbox("Select Province", list(scenario_budgets['provincial'].keys()))
+    with col_p2:
+        st.write("") # Spacing
+        st.write(f"Editing {province} Departments")
+        
+    budget_df = pd.DataFrame(list(scenario_budgets['provincial'][province].items()), columns=["Department", "Year 1"])
     for i in range(2, 6): budget_df[f"Year {i}"] = budget_df["Year 1"]
     budget_df.set_index("Department", inplace=True)
-    edited_df = st.data_editor(budget_df, use_container_width=True, num_rows="fixed")
-    base_budgets['provincial'][province] = edited_df["Year 1"].to_dict()
-    st.session_state.base_budgets = base_budgets
+    edited_df = st.data_editor(budget_df, use_container_width=True, num_rows="fixed", key=f"ed_prov_{province}")
+    scenario_budgets['provincial'][province] = edited_df["Year 1"].to_dict()
 
 else: # Local
-    budget_df = pd.DataFrame(list(base_budgets['local'].items()), columns=["Function", "Year 1"])
+    col_l1, col_l2 = st.columns([1, 2])
+    with col_l1:
+        municipality = st.selectbox("Select Municipality", list(scenario_budgets['local'].keys()))
+    with col_l2:
+        st.write("")
+        st.write(f"Editing {municipality} Budget")
+        
+    budget_df = pd.DataFrame(list(scenario_budgets['local'][municipality].items()), columns=["Function", "Year 1"])
     for i in range(2, 6): budget_df[f"Year {i}"] = budget_df["Year 1"]
     budget_df.set_index("Function", inplace=True)
-    edited_df = st.data_editor(budget_df, use_container_width=True, num_rows="fixed")
-    base_budgets['local'] = edited_df["Year 1"].to_dict()
-    st.session_state.base_budgets = base_budgets
+    edited_df = st.data_editor(budget_df, use_container_width=True, num_rows="fixed", key=f"ed_mun_{municipality}")
+    scenario_budgets['local'][municipality] = edited_df["Year 1"].to_dict()
+
+st.session_state.scenario_budgets = scenario_budgets
 
 # Run Simulation
-df_scenario = twin.simulate_5_years(base_budgets, st.session_state.base_budgets, levers)
-df_baseline = twin.simulate_5_years(base_budgets, st.session_state.base_budgets, {**levers, 'vat': 15, 'cit': 27, 'pit': 30, 'fuel_levy': 1.0, 'sin_tax': 1.0, 'grant_uplift': 1.0, 'min_wage': 1.0, 'eti': 0, 'repo_rate': 8.25, 'bbbee': 10, 'tariff': 0, 'localization': 0, 'markup_cap': 0})
+df_scenario = twin.simulate_5_years(scenario_budgets, base_budgets, levers)
+# Run Baseline (no changes)
+baseline_levers = {**levers, 'vat': 15, 'cit': 27, 'pit': 30, 'fuel_levy': 1.0, 'sin_tax': 1.0, 'grant_uplift': 1.0, 'min_wage': 1.0, 'eti': 0, 'repo_rate': 8.25, 'bbbee': 10, 'tariff': 0, 'localization': 0, 'markup_cap': 0}
+df_baseline = twin.simulate_5_years(base_budgets, base_budgets, baseline_levers)
 
 # Metrics
 col1, col2, col3, col4 = st.columns(4)
@@ -102,8 +124,8 @@ col4.metric("Year 5 Gini", f"{df_scenario.iloc[-1]['Gini']:.3f}", delta=f"{(df_s
 
 st.divider()
 
-# TABS
-tab1, tab2, tab3 = st.tabs(["📈 Macro", "🏢 Firms", "🏘️ Households"])
+# --- TABS ---
+tab1, tab2, tab3, tab4, tab5 = st.tabs(["📈 Macro", "🏢 Firms", "🏘️ Households", "🧠 AI Advisor", "🤖 AI Autopilot"])
 
 with tab1:
     fig_gdp = go.Figure()
@@ -122,3 +144,32 @@ with tab2:
 
 with tab3:
     st.plotly_chart(px.histogram(twin.microsim.households, x="current_income", nbins=100, title="Income Distribution"), use_container_width=True)
+
+with tab4:
+    if "messages" not in st.session_state: st.session_state.messages = []
+    for i, message in enumerate(st.session_state.messages):
+        with st.chat_message(message["role"]):
+            st.markdown(message["content"])
+            if message["role"] == "assistant":
+                pdf_bytes = generate_pdf(message["content"], df_scenario, df_baseline, levers)
+                st.download_button("📄 Download Memo", pdf_bytes, f"memo_{i}.pdf", "application/pdf", key=f"dl_{i}")
+
+    if prompt := st.chat_input("Ask the AI about this scenario..."):
+        st.session_state.messages.append({"role": "user", "content": prompt})
+        with st.chat_message("user"): st.markdown(prompt)
+        with st.chat_message("assistant"):
+            with st.spinner("Analyzing..."):
+                ai_response = twin.ask_ai_advisor(prompt, df_scenario)
+                st.markdown(ai_response)
+                pdf_bytes = generate_pdf(ai_response, df_scenario, df_baseline, levers)
+                st.download_button("📄 Download Memo", pdf_bytes, "memo.pdf", "application/pdf", key="dl_new")
+        st.session_state.messages.append({"role": "assistant", "content": ai_response})
+
+with tab5:
+    col_auto1, col_auto2 = st.columns(2)
+    target_poverty = col_auto1.number_input("Target Poverty (%)", 10.0, 50.0, 25.0)
+    max_debt = col_auto2.number_input("Max Debt (%)", 60.0, 100.0, 75.0)
+    if st.button("🚀 Run Autopilot"):
+        with st.spinner("Optimizing..."):
+            best = find_optimal_policy(twin, scenario_budgets, 800000, target_poverty, max_debt)
+            st.success(f"Found policy! Poverty: {best['resulting_poverty']:.1f}%, Debt: {best['resulting_debt']:.1f}%")
