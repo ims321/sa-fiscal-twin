@@ -66,16 +66,15 @@ class LeontiefTwin:
         X = Leontief_modified @ Y
         gdp_effect = np.sum(X * self.va)
         
-        # Extract demand shocks for the ABM (normalize X relative to a baseline)
         demand_shocks = {sec: 1.0 + (X[i] / 100000) for i, sec in enumerate(self.sectors)}
-        
-        # Step the Firm ABM to get the REAL net job change
         net_job_change = self.firm_market.step(cit_rate, markup_reduction, demand_shocks)
         hhi = self.firm_market.calculate_hhi()
         
-        base_revenue = 1_500_000
+        # CALIBRATION: Base revenue matches base spending to create a realistic deficit
+        # Base spending is ~600,000. Let's set base revenue to ~550,000.
+        base_revenue = 550_000
         revenue_multiplier = ((vat_rate / 15) * 0.3) + ((cit_rate / 27) * 0.2) + ((pit_rate / 30) * 0.5)
-        revenue = (base_revenue + gdp_effect) * revenue_multiplier
+        revenue = (base_revenue + gdp_effect * 0.1) * revenue_multiplier
         
         return gdp_effect, revenue, net_job_change, hhi, pd.DataFrame({'sector': self.sectors, 'gross_output_zar_mn': X})
 
@@ -84,7 +83,6 @@ class LeontiefTwin:
         current_debt = self.base_debt_zar_mn
         current_gdp = self.base_gdp_zar_mn
         
-        # Reset Micro and Firms
         self.microsim = HouseholdSimulator()
         self.firm_market = FirmMarket(num_firms=500)
         
@@ -113,7 +111,6 @@ class LeontiefTwin:
             current_debt -= net_fiscal 
             current_gdp = current_gdp * 1.015 + gdp_effect 
             
-            # Apply the ACTUAL job changes to the households
             self.microsim.households = self.microsim.apply_policy_shocks(net_job_change, vat_rate, pit_rate)
             micro_metrics = self.microsim.get_metrics(self.microsim.households)
             
@@ -123,7 +120,8 @@ class LeontiefTwin:
                 "Debt": current_debt / 1_000_000,
                 "Debt_to_GDP": (current_debt / current_gdp) * 100,
                 "Net_Jobs": net_job_change,
-                "Total_Employment": self.firm_market.get_total_employment(),
+                # Scale employment by 1000 to represent real economy size
+                "Total_Employment": self.firm_market.get_total_employment() * 1000,
                 "Net_Fiscal_mn": net_fiscal,
                 "Gini": micro_metrics["current_gini"],
                 "Poverty_Rate": micro_metrics["current_poverty"],
@@ -131,43 +129,3 @@ class LeontiefTwin:
             })
             
         return pd.DataFrame(history)
-
-    def ask_ai_advisor(self, query, scenario_data):
-        base_url = os.getenv("OMNIROUTE_BASE_URL", "http://localhost:20128/v1")
-        api_key = os.getenv("OMNIROUTE_API_KEY", "optional")
-        
-        final_year = scenario_data.iloc[-1]
-        summary = f"""
-        - Year 5 GDP: R {final_year['GDP']:.2f} Trillion
-        - Year 5 Debt-to-GDP: {final_year['Debt_to_GDP']:.1f}%
-        - Year 5 Total Employment: {final_year['Total_Employment']:,.0f} workers
-        - Year 5 Gini Coefficient: {final_year['Gini']:.3f}
-        - Year 5 Poverty Rate: {final_year['Poverty_Rate']:.1f}%
-        - Year 5 Market Concentration (HHI): {final_year['HHI']:.0f}
-        """
-        
-        system_prompt = f"""
-        You are a Chief Economist advising the South African National Treasury.
-        Here is the final 5-year macroeconomic simulation data based on the policy changes:
-        {summary}
-        
-        Answer the user's question professionally. Focus on trade-offs between GDP, Debt, Employment, Inequality, and Market Concentration. Keep it concise (under 250 words).
-        """
-        
-        try:
-            response = requests.post(
-                f"{base_url}/chat/completions",
-                headers={"Authorization": f"Bearer {api_key}"},
-                json={
-                    "model": "auto",
-                    "messages": [
-                        {"role": "system", "content": system_prompt},
-                        {"role": "user", "content": query}
-                    ],
-                    "temperature": 0.3
-                },
-                timeout=120
-            )
-            return response.json()["choices"][0]["message"]["content"]
-        except Exception as e:
-            return f"AI Advisor unavailable. Error: {e}"
