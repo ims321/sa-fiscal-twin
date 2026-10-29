@@ -22,6 +22,7 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 st.title("🇿🇦 South Africa Macroeconomic Twin")
+st.caption("Macro-Fiscal Simulation with Household Microsimulation")
 
 @st.cache_resource
 def init_engine():
@@ -62,10 +63,11 @@ df_baseline = twin.simulate_5_years(baseline_df, base_budgets, sum(base_budgets.
 
 st.divider()
 
-col1, col2, col3 = st.columns(3)
+col1, col2, col3, col4 = st.columns(4)
 col1.metric("Year 5 GDP", f"R {df_scenario.iloc[-1]['GDP']:.2f} T", delta=f"{(df_scenario.iloc[-1]['GDP'] - df_baseline.iloc[-1]['GDP']):.2f} T vs Baseline")
 col2.metric("Year 5 Debt-to-GDP", f"{df_scenario.iloc[-1]['Debt_to_GDP']:.1f} %", delta=f"{(df_scenario.iloc[-1]['Debt_to_GDP'] - df_baseline.iloc[-1]['Debt_to_GDP']):.1f} % vs Baseline", delta_color="inverse")
 col3.metric("Total Jobs (5-Yr Sum)", f"{df_scenario['Jobs_Created'].sum():,.0f}")
+col4.metric("Year 5 Gini", f"{df_scenario.iloc[-1]['Gini']:.3f}", delta=f"{(df_scenario.iloc[-1]['Gini'] - df_baseline.iloc[-1]['Gini']):.3f} vs Baseline", delta_color="inverse")
 
 col_chart1, col_chart2 = st.columns(2)
 with col_chart1:
@@ -82,8 +84,33 @@ with col_chart2:
     fig_debt.update_layout(title="Debt-to-GDP Ratio (%)", template="plotly_white")
     st.plotly_chart(fig_debt, use_container_width=True)
 
+# --- MICROSIM CHART ---
 st.divider()
-st.subheader("🧠 AI Economic Advisor & Report Generator")
+st.subheader("🏘️ Household Income Distribution (Microsimulation)")
+income_df = twin.microsim.households[['current_income']]
+fig_dist = px.histogram(income_df, x="current_income", nbins=100, title="Simulated Household Income Distribution", labels={'current_income': 'Annual Household Income (R)'}, color_discrete_sequence=['#3498db'])
+fig_dist.add_vline(x=twin.microsim.poverty_line, line_dash="dash", line_color="red", annotation_text="Poverty Line")
+st.plotly_chart(fig_dist, use_container_width=True)
+
+st.divider()
+with st.expander("💾 Save this Scenario to the Database"):
+    scenario_name = st.text_input("Scenario Name", "Microsim Scenario")
+    if st.button("Save to Supabase"):
+        supabase = get_supabase()
+        if supabase:
+            payload = {
+                "scenario_name": scenario_name,
+                "levers": {"envelope": envelope, "vat": vat_rate, "cit": cit_rate, "pit": pit_rate, "tariff": tariff_shock, "bbbee": bbbee_share, "markup": markup_reduction, "localization": localization},
+                "outputs": df_scenario.to_dict(orient="records")
+            }
+            try:
+                supabase.table("scenario_runs").insert(payload).execute()
+                st.success(f"Scenario '{scenario_name}' saved successfully!")
+            except Exception as e:
+                st.error(f"Failed to save: {e}")
+
+st.divider()
+st.subheader("🧠 AI Economic Advisor")
 
 if "messages" not in st.session_state:
     st.session_state.messages = []
@@ -92,19 +119,14 @@ for i, message in enumerate(st.session_state.messages):
     with st.chat_message(message["role"]):
         st.markdown(message["content"])
         if message["role"] == "assistant":
-            # Generate PDF bytes
             levers_dict = {"vat": vat_rate, "cit": cit_rate, "pit": pit_rate, "bbbee": bbbee_share, "tariff": tariff_shock, "localization": localization}
             pdf_bytes = generate_pdf(message["content"], df_scenario, df_baseline, levers_dict)
-            
             st.download_button(
-                label="📄 Download Full Cabinet Report (PDF)", 
-                data=pdf_bytes,
-                file_name=f"Cabinet_Memorandum_{i}.pdf", 
-                mime="application/pdf", 
-                key=f"download_hist_{i}"
+                label="📄 Download Full Cabinet Report (PDF)", data=pdf_bytes,
+                file_name=f"Cabinet_Memorandum_{i}.pdf", mime="application/pdf", key=f"download_hist_{i}"
             )
 
-if prompt := st.chat_input("Ask for a briefing note..."):
+if prompt := st.chat_input("Ask about trade-offs, inequality, or debt..."):
     st.session_state.messages.append({"role": "user", "content": prompt})
     with st.chat_message("user"):
         st.markdown(prompt)
@@ -118,11 +140,8 @@ if prompt := st.chat_input("Ask for a briefing note..."):
             pdf_bytes = generate_pdf(ai_response, df_scenario, df_baseline, levers_dict)
             
             st.download_button(
-                label="📄 Download Full Cabinet Report (PDF)", 
-                data=pdf_bytes,
-                file_name="Cabinet_Memorandum.pdf", 
-                mime="application/pdf", 
-                key="download_new"
+                label="📄 Download Full Cabinet Report (PDF)", data=pdf_bytes,
+                file_name="Cabinet_Memorandum.pdf", mime="application/pdf", key="download_new"
             )
             
     st.session_state.messages.append({"role": "assistant", "content": ai_response})

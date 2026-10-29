@@ -2,6 +2,7 @@ import numpy as np
 import pandas as pd
 import os
 import requests
+from engine.microsim import HouseholdSimulator
 
 class LeontiefTwin:
     def __init__(self, A_matrix, va_ratios, sectors):
@@ -10,6 +11,7 @@ class LeontiefTwin:
         self.sectors = list(sectors)
         self.I = np.eye(self.A.shape[0])
         self.base_Leontief_inverse = np.linalg.inv(self.I - self.A)
+        self.microsim = HouseholdSimulator()
         
         self.emp_multipliers = {
             'Agriculture': 4.0, 'Mining': 1.2, 'Manufacturing': 2.5,
@@ -30,7 +32,6 @@ class LeontiefTwin:
             'Small Business Development': 'Business Services'
         }
         
-        # 1. Budget Shocks
         for dept, new_total in actual_budgets.items():
             delta = new_total - base_budgets.get(dept, 0)
             sector = dept_to_sector.get(dept, 'Government & Social')
@@ -43,28 +44,22 @@ class LeontiefTwin:
             else:
                 Y[idx] += delta
         
-        # 2. Tariff Shock (Export elasticity)
         export_elasticity = -1.30
         for sec in ['Agriculture', 'Mining', 'Manufacturing']:
             idx = self.sectors.index(sec)
             export_change = 500000 * (tariff_shock / 100) * export_elasticity
             Y[idx] += export_change
             
-        # 3. Competition & Localization
         demand_boost = 1 + (markup_reduction / 100)
         Y = Y * demand_boost
+        
         A_modified = self.A * (1 + (localization / 100))
         Leontief_modified = np.linalg.inv(self.I - A_modified)
         
-        # 4. Tax Drag (Base rates: VAT 15%, CIT 27%, PIT 30%)
-        # Raising VAT lowers consumption demand
         vat_drag = 1 - ((vat_rate - 15) / 100 * 0.5) 
-        # Raising CIT lowers investment demand
         cit_drag = 1 - ((cit_rate - 27) / 100 * 0.3)
-        # Raising PIT lowers labor supply/consumption
         pit_drag = 1 - ((pit_rate - 30) / 100 * 0.4)
         
-        # Apply drags to specific sectors
         for i, sec in enumerate(self.sectors):
             if sec in ['Trade', 'Services', 'Business Services', 'Transport']:
                 Y[i] *= vat_drag
@@ -73,13 +68,10 @@ class LeontiefTwin:
             if sec in ['Trade', 'Services', 'Government & Social']:
                 Y[i] *= pit_drag
 
-        # 5. Calculate Output and GDP
         X = Leontief_modified @ Y
         gdp_effect = np.sum(X * self.va)
         jobs_effect = sum(X[i] * self.emp_multipliers.get(sector, 1.0) for i, sector in enumerate(self.sectors))
         
-        # 6. Calculate Revenue (Simplified tax-to-GDP ratio)
-        # Assume base revenue is R1.5 Trillion, scaled by GDP effect and tax rates
         base_revenue = 1_500_000
         revenue_multiplier = ((vat_rate / 15) * 0.3) + ((cit_rate / 27) * 0.2) + ((pit_rate / 30) * 0.5)
         revenue = (base_revenue + gdp_effect) * revenue_multiplier
@@ -90,6 +82,10 @@ class LeontiefTwin:
         history = []
         current_debt = self.base_debt_zar_mn
         current_gdp = self.base_gdp_zar_mn
+        
+        # Reset microsim households at the start of 5-year run
+        self.microsim.households['current_income'] = self.microsim.households['base_income']
+        self.microsim.households['employed'] = np.random.choice([True, False], size=self.microsim.n, p=[0.65, 0.35])
         
         for year in range(1, 6):
             year_budgets = budget_matrix.iloc[year-1].to_dict()
@@ -116,6 +112,10 @@ class LeontiefTwin:
             current_debt -= net_fiscal 
             current_gdp = current_gdp * 1.015 + gdp_effect 
             
+            # Update Microsim with year's jobs and tax changes
+            self.microsim.households = self.microsim.apply_policy_shocks(jobs_effect, vat_rate, pit_rate)
+            micro_metrics = self.microsim.get_metrics(self.microsim.households)
+            
             history.append({
                 "Year": f"Year {year}",
                 "GDP": current_gdp / 1_000_000,
@@ -123,9 +123,10 @@ class LeontiefTwin:
                 "Debt_to_GDP": (current_debt / current_gdp) * 100,
                 "Jobs_Created": jobs_effect,
                 "Net_Fiscal_mn": net_fiscal,
-                "Revenue_mn": revenue,
                 "Interest_Payment_mn": interest_payment,
-                "Actual_Spend_mn": total_proposed
+                "Actual_Spend_mn": total_proposed,
+                "Gini": micro_metrics["current_gini"],
+                "Poverty_Rate": micro_metrics["current_poverty"]
             })
             
         return pd.DataFrame(history)
@@ -139,6 +140,8 @@ class LeontiefTwin:
         - Year 5 GDP: R {final_year['GDP']:.2f} Trillion
         - Year 5 Debt-to-GDP: {final_year['Debt_to_GDP']:.1f}%
         - Total Jobs Created (5 Years): {scenario_data['Jobs_Created'].sum():,.0f}
+        - Year 5 Gini Coefficient: {final_year['Gini']:.3f} (Baseline ~0.63)
+        - Year 5 Poverty Rate: {final_year['Poverty_Rate']:.1f}% (Baseline ~35%)
         - Year 5 Net Fiscal Balance: R {final_year['Net_Fiscal_mn']:,.0f} million
         """
         
@@ -147,7 +150,7 @@ class LeontiefTwin:
         Here is the final 5-year macroeconomic simulation data based on the policy changes:
         {summary}
         
-        Answer the user's question professionally. Keep it concise (under 250 words).
+        Answer the user's question professionally. Focus on trade-offs between GDP, Debt, Jobs, and Inequality. Keep it concise (under 250 words).
         """
         
         try:
