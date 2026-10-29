@@ -32,7 +32,7 @@ def init_engine():
 
 twin = init_engine()
 
-# --- SIDEBAR ---
+# --- SIDEBAR CONTROLS ---
 st.sidebar.header("🏦 Data Source")
 if "base_budgets" not in st.session_state:
     st.session_state.base_budgets = fetch_live_budgets()
@@ -47,9 +47,14 @@ envelope = st.sidebar.number_input("Base Envelope (R mn)", value=sum(base_budget
 allow_deficit = st.sidebar.toggle("Allow Deficit Spending", value=True)
 
 st.sidebar.subheader("💰 Tax Levers")
-vat_rate = st.sidebar.slider("VAT Rate (%)", 10, 25, 15)
-cit_rate = st.sidebar.slider("Corporate Tax (%)", 15, 40, 27)
-pit_rate = st.sidebar.slider("Personal Income Tax (%)", 15, 45, 30)
+# Pull defaults from autopilot if it ran, otherwise use standard defaults
+default_vat = st.session_state.get('opt_vat', 15)
+default_cit = st.session_state.get('opt_cit', 27)
+default_pit = st.session_state.get('opt_pit', 30)
+
+vat_rate = st.sidebar.slider("VAT Rate (%)", 10, 25, default_vat)
+cit_rate = st.sidebar.slider("Corporate Tax (%)", 15, 40, default_cit)
+pit_rate = st.sidebar.slider("Personal Income Tax (%)", 15, 45, default_pit)
 
 st.sidebar.subheader("🏭 Industrial & Trade Policy")
 bbbee_share = st.sidebar.slider("B-BBEE SME Redirect (%)", 0, 50, 10)
@@ -84,6 +89,15 @@ if selected_scenario != "None (Baseline Only)":
 # --- MAIN UI ---
 st.subheader("📊 5-Year Budget Allocation (R mn)")
 years = [f"Year {i}" for i in range(1, 6)]
+
+# Apply autopilot budget scaling if it ran
+if 'pw_scale' in st.session_state:
+    base_budgets['Public Works'] = int(base_budgets['Public Works'] * st.session_state.pw_scale)
+    base_budgets['Education'] = int(base_budgets['Education'] * st.session_state.edu_scale)
+    # Clear the scale so it doesn't compound on every rerun
+    del st.session_state.pw_scale
+    del st.session_state.edu_scale
+
 budget_df = pd.DataFrame([base_budgets for _ in range(5)], index=years)
 edited_budget_df = st.data_editor(budget_df, use_container_width=True, num_rows="fixed", column_config={col: st.column_config.NumberColumn(format="%d") for col in budget_df.columns})
 
@@ -102,7 +116,7 @@ col4.metric("Year 5 Gini", f"{df_scenario.iloc[-1]['Gini']:.3f}", delta=f"{(df_s
 st.divider()
 
 # --- TABS ---
-tab1, tab2, tab3, tab4 = st.tabs(["📈 Macro Overview", "🏢 Firm Dynamics", "🏘️ Households", "🧠 AI Advisor"])
+tab1, tab2, tab3, tab4, tab5 = st.tabs(["📈 Macro Overview", "🏢 Firm Dynamics", "🏘️ Households", "🧠 AI Advisor", "🤖 AI Autopilot"])
 
 with tab1:
     col_chart1, col_chart2 = st.columns(2)
@@ -189,3 +203,27 @@ with tab4:
                 st.download_button(label="📄 Download Cabinet Report", data=pdf_bytes, file_name="Cabinet_Memo.pdf", mime="application/pdf", key="dl_new")
                 
         st.session_state.messages.append({"role": "assistant", "content": ai_response})
+
+with tab5:
+    st.subheader("🤖 AI Autopilot Optimization")
+    st.markdown("Set your macroeconomic targets below, and the engine will run 50 hidden simulations to find the optimal combination of taxes and spending to achieve them.")
+    
+    col_auto1, col_auto2 = st.columns(2)
+    with col_auto1:
+        target_poverty = st.number_input("Target Poverty Rate (%)", min_value=10.0, max_value=50.0, value=28.0, step=1.0)
+    with col_auto2:
+        max_debt = st.number_input("Max Debt-to-GDP (%)", min_value=60.0, max_value=100.0, value=75.0, step=1.0)
+        
+    if st.button("🚀 Run Autopilot Optimization", type="primary"):
+        with st.spinner("Running 50 simulations to find the optimal policy..."):
+            best_policy = find_optimal_policy(twin, base_budgets, envelope, target_poverty, max_debt)
+            
+            # Save optimal settings to session state so they override the sliders
+            st.session_state.opt_vat = int(best_policy['vat'])
+            st.session_state.opt_cit = int(best_policy['cit'])
+            st.session_state.opt_pit = int(best_policy['pit'])
+            st.session_state.pw_scale = best_policy['pw_scale']
+            st.session_state.edu_scale = best_policy['edu_scale']
+            
+            st.success(f"Optimization Complete! Found policy to achieve {best_policy['resulting_poverty']:.1f}% poverty and {best_policy['resulting_debt']:.1f}% debt.")
+            st.info("The sidebar sliders and budget table have been automatically updated to the optimal settings. Click other tabs to view the results.")
