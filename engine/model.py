@@ -70,8 +70,6 @@ class LeontiefTwin:
         net_job_change = self.firm_market.step(cit_rate, markup_reduction, demand_shocks)
         hhi = self.firm_market.calculate_hhi()
         
-        # CALIBRATION: Base revenue matches base spending to create a realistic deficit
-        # Base spending is ~600,000. Let's set base revenue to ~550,000.
         base_revenue = 550_000
         revenue_multiplier = ((vat_rate / 15) * 0.3) + ((cit_rate / 27) * 0.2) + ((pit_rate / 30) * 0.5)
         revenue = (base_revenue + gdp_effect * 0.1) * revenue_multiplier
@@ -120,7 +118,6 @@ class LeontiefTwin:
                 "Debt": current_debt / 1_000_000,
                 "Debt_to_GDP": (current_debt / current_gdp) * 100,
                 "Net_Jobs": net_job_change,
-                # Scale employment by 1000 to represent real economy size
                 "Total_Employment": self.firm_market.get_total_employment() * 1000,
                 "Net_Fiscal_mn": net_fiscal,
                 "Gini": micro_metrics["current_gini"],
@@ -164,8 +161,26 @@ class LeontiefTwin:
                     ],
                     "temperature": 0.3
                 },
-                timeout=120
+                timeout=300 # Increased to 5 minutes
             )
             return response.json()["choices"][0]["message"]["content"]
         except Exception as e:
-            return f"AI Advisor unavailable. Error: {e}"
+            # Fallback memo if the local AI takes too long
+            return f"""
+MEMORANDUM
+
+TO: Cabinet
+FROM: Chief Economist, National Treasury
+SUBJECT: Simulation Results Analysis
+
+The economic engine has successfully simulated your policy levers over a 5-year horizon. 
+
+Key Outcomes:
+- Year 5 GDP: R {final_year['GDP']:.2f} Trillion
+- Debt-to-GDP: {final_year['Debt_to_GDP']:.1f}%
+- Poverty Rate: {final_year['Poverty_Rate']:.1f}%
+
+Note: The AI Advisor timed out while trying to generate a custom narrative for this specific scenario. However, the simulated data remains accurate. Please review the charts in the dashboard for sectoral and household impacts.
+
+(Technical Error: {e})
+            """
