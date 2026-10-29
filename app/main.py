@@ -10,29 +10,10 @@ from engine.data_loader import load_twin_data, get_supabase
 from engine.model import LeontiefTwin
 from engine.live_data import fetch_live_budgets
 from engine.report import generate_pdf
-from engine.optimizer import find_optimal_policy
 
-st.set_page_config(page_title="SA Macro Twin", layout="wide", initial_sidebar_state="expanded")
+st.set_page_config(page_title="SA Macro Twin", layout="wide")
 
-st.markdown("""
-<style>
-    @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&display=swap');
-    html, body, [class*="css"] { font-family: 'Inter', sans-serif; }
-    .stMetric { background-color: #f8f9fa; padding: 15px; border-radius: 10px; box-shadow: 0 4px 6px rgba(0,0,0,0.05); }
-    div[data-testid="stSidebar"] { background-color: #f1f3f5; }
-</style>
-""", unsafe_allow_html=True)
-
-st.title("🇿🇦 South Africa Macroeconomic Twin")
-
-@st.cache_resource
-def init_engine():
-    A, va, sectors = load_twin_data()
-    return LeontiefTwin(A, va, sectors)
-
-twin = init_engine()
-
-# Initialize Baselines (Locked) and Scenario (Editable)
+# Initialize
 if "base_budgets" not in st.session_state:
     st.session_state.base_budgets = fetch_live_budgets()
     import copy
@@ -41,135 +22,82 @@ if "base_budgets" not in st.session_state:
 base_budgets = st.session_state.base_budgets
 scenario_budgets = st.session_state.scenario_budgets
 
+@st.cache_resource
+def init_engine():
+    A, va, sectors = load_twin_data()
+    return LeontiefTwin(A, va, sectors)
+twin = init_engine()
+
 # --- SIDEBAR LEVERS ---
-st.sidebar.header("⚙️ Fiscal Rules")
-levers = {}
-levers['allow_deficit'] = st.sidebar.toggle("Allow Deficit Spending", value=True)
-
-with st.sidebar.expander("💰 National Taxes", expanded=True):
-    levers['vat'] = st.slider("VAT Rate (%)", 10, 25, 15)
+st.sidebar.header("⚙️ National Fiscal & Macro Levers")
+levers = {'allow_deficit': st.sidebar.toggle("Allow Deficit Spending", value=True)}
+with st.sidebar.expander("💰 National Taxes"):
+    levers['vat'] = st.slider("VAT (%)", 10, 25, 15)
     levers['cit'] = st.slider("Corporate Tax (%)", 15, 40, 27)
-    levers['pit'] = st.slider("Personal Income Tax (%)", 15, 45, 30)
-    levers['fuel_levy'] = st.slider("Fuel Levy Multiplier", 0.5, 2.0, 1.0, step=0.1)
-    levers['sin_tax'] = st.slider("Sin Tax Multiplier", 0.5, 2.0, 1.0, step=0.1)
-
-with st.sidebar.expander("👥 Social & Labour"):
-    levers['grant_uplift'] = st.slider("Social Grant Uplift", 1.0, 1.5, 1.0, step=0.1)
-    levers['min_wage'] = st.slider("Minimum Wage Multiplier", 1.0, 1.5, 1.0, step=0.1)
-    levers['eti'] = st.slider("Employment Tax Incentive (ETI)", 0, 100, 0, step=10)
-
+    levers['pit'] = st.slider("Personal Tax (%)", 15, 45, 30)
+    levers['fuel_levy'] = st.slider("Fuel Levy (Mult)", 0.5, 2.0, 1.0)
+    levers['sin_tax'] = st.slider("Sin Tax (Mult)", 0.5, 2.0, 1.0)
 with st.sidebar.expander("🏦 Monetary Policy"):
-    levers['repo_rate'] = st.slider("Repo Rate (%)", 5.0, 15.0, 8.25, step=0.25)
-
-with st.sidebar.expander("🏭 Trade & Industrial"):
-    levers['bbbee'] = st.slider("B-BBEE SME Redirect (%)", 0, 50, 10)
-    levers['tariff'] = st.slider("Avg Tariff Change (%)", -20, 20, 0)
+    levers['repo_rate'] = st.slider("Repo Rate (%)", 5.0, 15.0, 8.25)
+with st.sidebar.expander("🏭 Industrial & Trade"):
+    levers['bbbee'] = st.slider("B-BBEE Redirect (%)", 0, 50, 10)
+    levers['tariff'] = st.slider("Tariff Change (%)", -20, 20, 0)
     levers['localization'] = st.slider("Localization (%)", 0, 50, 0)
-    levers['markup_cap'] = st.slider("Competition Markup Cap (%)", 0, 20, 0)
+    levers['markup_cap'] = st.slider("Markup Cap (%)", 0, 20, 0)
 
+# --- MUNICIPAL SCENARIO PLANNER ---
+st.subheader("🏙️ Municipal Scenario Planner")
+mun_select = st.selectbox("Select Municipality", list(scenario_budgets['local'].keys()))
 
-# --- MAIN UI: BUDGET EDITOR ---
-st.subheader("📊 Budget Allocation by Sphere (R mn)")
-sphere_select = st.radio("Select Sphere to Edit", ["National", "Provincial", "Local"], horizontal=True)
-
-if sphere_select == "National":
-    budget_df = pd.DataFrame(list(scenario_budgets['national'].items()), columns=["Department", "Year 1"])
-    for i in range(2, 6): budget_df[f"Year {i}"] = budget_df["Year 1"]
-    budget_df.set_index("Department", inplace=True)
-    edited_df = st.data_editor(budget_df, use_container_width=True, num_rows="fixed")
-    scenario_budgets['national'] = edited_df["Year 1"].to_dict()
-
-elif sphere_select == "Provincial":
-    col_p1, col_p2 = st.columns([1, 2])
-    with col_p1:
-        province = st.selectbox("Select Province", list(scenario_budgets['provincial'].keys()))
-    with col_p2:
-        st.write("") # Spacing
-        st.write(f"Editing {province} Departments")
+if mun_select:
+    mun_data = scenario_budgets['local'][mun_select]
+    base_mun_data = base_budgets['local'][mun_select]
+    
+    # Municipal Levers
+    st.markdown("### 📈 Adjust Municipal Levers")
+    col_m1, col_m2, col_m3 = st.columns(3)
+    with col_m1:
+        tariff_increase = st.slider("Service Tariff Increase (%)", 0.0, 20.0, 5.0, step=0.5)
+    with col_m2:
+        rate_increase = st.slider("Property Rate Increase (%)", 0.0, 20.0, 5.0, step=0.5)
+    with col_m3:
+        collection_rate = st.slider("Collection Rate (%)", 70.0, 100.0, 90.0, step=1.0)
         
-    budget_df = pd.DataFrame(list(scenario_budgets['provincial'][province].items()), columns=["Department", "Year 1"])
-    for i in range(2, 6): budget_df[f"Year {i}"] = budget_df["Year 1"]
-    budget_df.set_index("Department", inplace=True)
-    edited_df = st.data_editor(budget_df, use_container_width=True, num_rows="fixed", key=f"ed_prov_{province}")
-    scenario_budgets['provincial'][province] = edited_df["Year 1"].to_dict()
+    # Apply levers to revenue
+    for rev_item in mun_data['revenue']:
+        if 'Service Charges' in rev_item or 'Fuel Levy' in rev_item:
+            mun_data['revenue'][rev_item] = base_mun_data['revenue'][rev_item] * (1 + tariff_increase / 100)
+        elif 'Property Rates' in rev_item:
+            mun_data['revenue'][rev_item] = base_mun_data['revenue'][rev_item] * (1 + rate_increase / 100)
+            
+    # Apply collection rate (reduces actual revenue recognized)
+    for rev_item in mun_data['revenue']:
+        if rev_item not in ['Operating Grants & Subsidies']: # Grants are usually 100% collected
+            mun_data['revenue'][rev_item] *= (collection_rate / 100)
+            
+    # Display Revenue vs Expenditure
+    st.markdown("### 📊 Municipal Budget Summary (R millions)")
+    col_rev, col_exp = st.columns(2)
+    with col_rev:
+        st.metric("Total Revenue", f"R {sum(mun_data['revenue'].values()):,.0f} mn")
+        rev_df = pd.DataFrame(list(mun_data['revenue'].items()), columns=["Revenue Item", "Amount"])
+        st.dataframe(rev_df, hide_index=True, use_container_width=True)
+    with col_exp:
+        st.metric("Total Expenditure", f"R {sum(mun_data['expenditure'].values()):,.0f} mn")
+        exp_df = pd.DataFrame(list(mun_data['expenditure'].items()), columns=["Expenditure Item", "Amount"])
+        st.dataframe(exp_df, hide_index=True, use_container_width=True)
 
-else: # Local
-    col_l1, col_l2 = st.columns([1, 2])
-    with col_l1:
-        municipality = st.selectbox("Select Municipality", list(scenario_budgets['local'].keys()))
-    with col_l2:
-        st.write("")
-        st.write(f"Editing {municipality} Budget")
-        
-    budget_df = pd.DataFrame(list(scenario_budgets['local'][municipality].items()), columns=["Function", "Year 1"])
-    for i in range(2, 6): budget_df[f"Year {i}"] = budget_df["Year 1"]
-    budget_df.set_index("Function", inplace=True)
-    edited_df = st.data_editor(budget_df, use_container_width=True, num_rows="fixed", key=f"ed_mun_{municipality}")
-    scenario_budgets['local'][municipality] = edited_df["Year 1"].to_dict()
-
-st.session_state.scenario_budgets = scenario_budgets
+    # Calculate Surplus/Deficit
+    surplus = sum(mun_data['revenue'].values()) - sum(mun_data['expenditure'].values())
+    st.metric("Operating Surplus / (Deficit)", f"R {surplus:,.0f} mn", delta_color="normal" if surplus > 0 else "inverse")
 
 # Run Simulation
 df_scenario = twin.simulate_5_years(scenario_budgets, base_budgets, levers)
-# Run Baseline (no changes)
-baseline_levers = {**levers, 'vat': 15, 'cit': 27, 'pit': 30, 'fuel_levy': 1.0, 'sin_tax': 1.0, 'grant_uplift': 1.0, 'min_wage': 1.0, 'eti': 0, 'repo_rate': 8.25, 'bbbee': 10, 'tariff': 0, 'localization': 0, 'markup_cap': 0}
-df_baseline = twin.simulate_5_years(base_budgets, base_budgets, baseline_levers)
+df_baseline = twin.simulate_5_years(base_budgets, base_budgets, {**levers, 'vat': 15, 'cit': 27, 'pit': 30, 'fuel_levy': 1.0, 'sin_tax': 1.0, 'grant_uplift': 1.0, 'min_wage': 1.0, 'eti': 0, 'repo_rate': 8.25, 'bbbee': 10, 'tariff': 0, 'localization': 0, 'markup_cap': 0})
 
-# Metrics
+# Metrics & Tabs
 col1, col2, col3, col4 = st.columns(4)
 col1.metric("Year 5 GDP", f"R {df_scenario.iloc[-1]['GDP']:.2f} T", delta=f"{(df_scenario.iloc[-1]['GDP'] - df_baseline.iloc[-1]['GDP']):.2f} T")
 col2.metric("Year 5 Debt", f"{df_scenario.iloc[-1]['Debt_to_GDP']:.1f} %", delta=f"{(df_scenario.iloc[-1]['Debt_to_GDP'] - df_baseline.iloc[-1]['Debt_to_GDP']):.1f} %", delta_color="inverse")
 col3.metric("Year 5 Employment", f"{df_scenario.iloc[-1]['Total_Employment']:,.0f}", delta=f"{(df_scenario.iloc[-1]['Total_Employment'] - df_baseline.iloc[-1]['Total_Employment']):,.0f}")
 col4.metric("Year 5 Gini", f"{df_scenario.iloc[-1]['Gini']:.3f}", delta=f"{(df_scenario.iloc[-1]['Gini'] - df_baseline.iloc[-1]['Gini']):.3f}", delta_color="inverse")
-
-st.divider()
-
-# --- TABS ---
-tab1, tab2, tab3, tab4, tab5 = st.tabs(["📈 Macro", "🏢 Firms", "🏘️ Households", "🧠 AI Advisor", "🤖 AI Autopilot"])
-
-with tab1:
-    fig_gdp = go.Figure()
-    fig_gdp.add_trace(go.Scatter(x=df_baseline["Year"], y=df_baseline["GDP"], name='Baseline', line=dict(dash='dot')))
-    fig_gdp.add_trace(go.Scatter(x=df_scenario["Year"], y=df_scenario["GDP"], name='Scenario', line=dict(color='#2ecc71', width=4)))
-    fig_gdp.update_layout(title="GDP Projection", template="plotly_white")
-    st.plotly_chart(fig_gdp, use_container_width=True)
-
-with tab2:
-    col_f1, col_f2 = st.columns(2)
-    with col_f1:
-        active_firms = pd.DataFrame([f.to_dict() for f in twin.firm_market.firms if f.active])
-        st.plotly_chart(px.scatter(active_firms, x="productivity", y="employees", color="sector", title="Firm Survival"), use_container_width=True)
-    with col_f2:
-        st.plotly_chart(px.line(df_scenario, x="Year", y="HHI", title="Market Concentration (HHI)"), use_container_width=True)
-
-with tab3:
-    st.plotly_chart(px.histogram(twin.microsim.households, x="current_income", nbins=100, title="Income Distribution"), use_container_width=True)
-
-with tab4:
-    if "messages" not in st.session_state: st.session_state.messages = []
-    for i, message in enumerate(st.session_state.messages):
-        with st.chat_message(message["role"]):
-            st.markdown(message["content"])
-            if message["role"] == "assistant":
-                pdf_bytes = generate_pdf(message["content"], df_scenario, df_baseline, levers)
-                st.download_button("📄 Download Memo", pdf_bytes, f"memo_{i}.pdf", "application/pdf", key=f"dl_{i}")
-
-    if prompt := st.chat_input("Ask the AI about this scenario..."):
-        st.session_state.messages.append({"role": "user", "content": prompt})
-        with st.chat_message("user"): st.markdown(prompt)
-        with st.chat_message("assistant"):
-            with st.spinner("Analyzing..."):
-                ai_response = twin.ask_ai_advisor(prompt, df_scenario)
-                st.markdown(ai_response)
-                pdf_bytes = generate_pdf(ai_response, df_scenario, df_baseline, levers)
-                st.download_button("📄 Download Memo", pdf_bytes, "memo.pdf", "application/pdf", key="dl_new")
-        st.session_state.messages.append({"role": "assistant", "content": ai_response})
-
-with tab5:
-    col_auto1, col_auto2 = st.columns(2)
-    target_poverty = col_auto1.number_input("Target Poverty (%)", 10.0, 50.0, 25.0)
-    max_debt = col_auto2.number_input("Max Debt (%)", 60.0, 100.0, 75.0)
-    if st.button("🚀 Run Autopilot"):
-        with st.spinner("Optimizing..."):
-            best = find_optimal_policy(twin, scenario_budgets, 800000, target_poverty, max_debt)
-            st.success(f"Found policy! Poverty: {best['resulting_poverty']:.1f}%, Debt: {best['resulting_debt']:.1f}%")
