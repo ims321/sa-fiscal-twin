@@ -73,10 +73,11 @@ df_baseline = twin.simulate_5_years(baseline_df, base_budgets, sum(base_budgets.
 
 st.divider()
 
+# --- FIXED METRICS (Using Total_Employment instead of Jobs_Created) ---
 col1, col2, col3, col4 = st.columns(4)
 col1.metric("Year 5 GDP", f"R {df_scenario.iloc[-1]['GDP']:.2f} T", delta=f"{(df_scenario.iloc[-1]['GDP'] - df_baseline.iloc[-1]['GDP']):.2f} T vs Baseline")
 col2.metric("Year 5 Debt-to-GDP", f"{df_scenario.iloc[-1]['Debt_to_GDP']:.1f} %", delta=f"{(df_scenario.iloc[-1]['Debt_to_GDP'] - df_baseline.iloc[-1]['Debt_to_GDP']):.1f} % vs Baseline", delta_color="inverse")
-col3.metric("Total Jobs (5-Yr Sum)", f"{df_scenario['Jobs_Created'].sum():,.0f}")
+col3.metric("Year 5 Total Employment", f"{df_scenario.iloc[-1]['Total_Employment']:,.0f}", delta=f"{(df_scenario.iloc[-1]['Total_Employment'] - df_baseline.iloc[-1]['Total_Employment']):,.0f} vs Baseline")
 col4.metric("Year 5 Gini", f"{df_scenario.iloc[-1]['Gini']:.3f}", delta=f"{(df_scenario.iloc[-1]['Gini'] - df_baseline.iloc[-1]['Gini']):.3f} vs Baseline", delta_color="inverse")
 
 col_chart1, col_chart2 = st.columns(2)
@@ -95,11 +96,9 @@ with col_chart2:
     st.plotly_chart(fig_debt, use_container_width=True)
 
 st.divider()
-st.subheader("🏢 Firm Dynamics & Market Concentration (Agent-Based Model)")
-
+st.subheader("🏢 Firm Dynamics & Market Concentration")
 col_firm1, col_firm2 = st.columns(2)
 with col_firm1:
-    # Firm size distribution
     active_firms_df = pd.DataFrame([f.to_dict() for f in twin.firm_market.firms if f.active])
     fig_firms = px.scatter(active_firms_df, x="productivity", y="employees", size="market_share", color="sector", 
                            title="Active Firms: Productivity vs Employment Size", template="plotly_white")
@@ -114,7 +113,7 @@ with col_firm2:
     st.plotly_chart(fig_hhi, use_container_width=True)
 
 st.divider()
-st.subheader("🏘️ Household Income Distribution (Microsimulation)")
+st.subheader("🏘️ Household Income Distribution")
 income_df = twin.microsim.households[['current_income']]
 fig_dist = px.histogram(income_df, x="current_income", nbins=100, title="Simulated Household Income Distribution", labels={'current_income': 'Annual Household Income (R)'}, color_discrete_sequence=['#3498db'])
 fig_dist.add_vline(x=twin.microsim.poverty_line, line_dash="dash", line_color="red", annotation_text="Poverty Line")
@@ -154,7 +153,7 @@ for i, message in enumerate(st.session_state.messages):
                 file_name=f"Cabinet_Memorandum_{i}.pdf", mime="application/pdf", key=f"download_hist_{i}"
             )
 
-if prompt := st.chat_input("Ask about firm dynamics, competition, inequality, or debt..."):
+if prompt := st.chat_input("Ask about firm dynamics, inequality, or debt..."):
     st.session_state.messages.append({"role": "user", "content": prompt})
     with st.chat_message("user"):
         st.markdown(prompt)
