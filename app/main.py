@@ -8,6 +8,7 @@ import plotly.express as px
 import plotly.graph_objects as go
 from engine.data_loader import load_twin_data, get_supabase
 from engine.model import LeontiefTwin
+from engine.report import generate_pdf
 
 st.set_page_config(page_title="SA Macro Twin", layout="wide", initial_sidebar_state="expanded")
 
@@ -31,7 +32,6 @@ twin = init_engine()
 base_budgets = {'Health': 250000, 'Education': 300000, 'Public Works': 40000, 
                 'Trade and Industry': 10000, 'Small Business Development': 5000}
 
-# --- SIDEBAR CONTROLS ---
 st.sidebar.header("⚙️ Fiscal Rules")
 envelope = st.sidebar.number_input("Base Envelope (R mn)", value=sum(base_budgets.values()), step=10000)
 allow_deficit = st.sidebar.toggle("Allow Deficit Spending", value=True)
@@ -47,7 +47,6 @@ tariff_shock = st.sidebar.slider("Avg Tariff Change (%)", -20, 20, 0)
 markup_reduction = st.sidebar.slider("Competition Markup Reduction (%)", 0, 20, 0)
 localization = st.sidebar.slider("Localization / Import Substitution (%)", 0, 50, 0)
 
-# --- MULTI-YEAR BUDGET MATRIX ---
 st.subheader("📊 5-Year Budget Allocation (R mn)")
 years = [f"Year {i}" for i in range(1, 6)]
 budget_df = pd.DataFrame([base_budgets for _ in range(5)], index=years)
@@ -57,7 +56,6 @@ edited_budget_df = st.data_editor(
     column_config={col: st.column_config.NumberColumn(format="%d") for col in budget_df.columns}
 )
 
-# --- EXECUTION ---
 df_scenario = twin.simulate_5_years(edited_budget_df, base_budgets, envelope, allow_deficit, vat_rate, cit_rate, pit_rate, tariff_shock, bbbee_share, markup_reduction, localization)
 baseline_df = pd.DataFrame([base_budgets for _ in range(5)], index=years)
 df_baseline = twin.simulate_5_years(baseline_df, base_budgets, sum(base_budgets.values()), allow_deficit, 15, 27, 30, 0, 0, 0, 0)
@@ -85,24 +83,7 @@ with col_chart2:
     st.plotly_chart(fig_debt, use_container_width=True)
 
 st.divider()
-with st.expander("💾 Save this Scenario to the Database"):
-    scenario_name = st.text_input("Scenario Name", "Tax & Spend Scenario")
-    if st.button("Save to Supabase"):
-        supabase = get_supabase()
-        if supabase:
-            payload = {
-                "scenario_name": scenario_name,
-                "levers": {"envelope": envelope, "vat": vat_rate, "cit": cit_rate, "pit": pit_rate, "tariff": tariff_shock, "bbbee": bbbee_share, "markup": markup_reduction, "localization": localization},
-                "outputs": df_scenario.to_dict(orient="records")
-            }
-            try:
-                supabase.table("scenario_runs").insert(payload).execute()
-                st.success(f"Scenario '{scenario_name}' saved successfully!")
-            except Exception as e:
-                st.error(f"Failed to save: {e}")
-
-st.divider()
-st.subheader("🧠 AI Economic Advisor")
+st.subheader("🧠 AI Economic Advisor & Report Generator")
 
 if "messages" not in st.session_state:
     st.session_state.messages = []
@@ -111,12 +92,19 @@ for i, message in enumerate(st.session_state.messages):
     with st.chat_message(message["role"]):
         st.markdown(message["content"])
         if message["role"] == "assistant":
+            # Generate PDF bytes
+            levers_dict = {"vat": vat_rate, "cit": cit_rate, "pit": pit_rate, "bbbee": bbbee_share, "tariff": tariff_shock, "localization": localization}
+            pdf_bytes = generate_pdf(message["content"], df_scenario, df_baseline, levers_dict)
+            
             st.download_button(
-                label="📄 Download Memo", data=message["content"],
-                file_name=f"Cabinet_Memorandum_{i}.txt", mime="text/plain", key=f"download_hist_{i}"
+                label="📄 Download Full Cabinet Report (PDF)", 
+                data=pdf_bytes,
+                file_name=f"Cabinet_Memorandum_{i}.pdf", 
+                mime="application/pdf", 
+                key=f"download_hist_{i}"
             )
 
-if prompt := st.chat_input("Ask about tax trade-offs, debt, or employment..."):
+if prompt := st.chat_input("Ask for a briefing note..."):
     st.session_state.messages.append({"role": "user", "content": prompt})
     with st.chat_message("user"):
         st.markdown(prompt)
@@ -125,9 +113,16 @@ if prompt := st.chat_input("Ask about tax trade-offs, debt, or employment..."):
         with st.spinner("Analyzing scenario..."):
             ai_response = twin.ask_ai_advisor(prompt, df_scenario)
             st.markdown(ai_response)
+            
+            levers_dict = {"vat": vat_rate, "cit": cit_rate, "pit": pit_rate, "bbbee": bbbee_share, "tariff": tariff_shock, "localization": localization}
+            pdf_bytes = generate_pdf(ai_response, df_scenario, df_baseline, levers_dict)
+            
             st.download_button(
-                label="📄 Download Memo", data=ai_response,
-                file_name="Cabinet_Memorandum.txt", mime="text/plain", key="download_new"
+                label="📄 Download Full Cabinet Report (PDF)", 
+                data=pdf_bytes,
+                file_name="Cabinet_Memorandum.pdf", 
+                mime="application/pdf", 
+                key="download_new"
             )
             
     st.session_state.messages.append({"role": "assistant", "content": ai_response})

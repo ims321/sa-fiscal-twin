@@ -7,3 +7,4 @@ python-dotenv
 requests
 cryptography==48.0.1
 openpyxl
+fpdf2
