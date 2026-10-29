@@ -11,7 +11,7 @@ from engine.model import LeontiefTwin
 st.set_page_config(page_title="SA Fiscal Twin", layout="wide")
 st.title("South Africa Fiscal–Economic Twin")
 
-@st.cache_data
+@st.cache_resource # Changed from cache_data to cache_resource
 def init_engine():
     A, va, sectors = load_twin_data()
     return LeontiefTwin(A, va, sectors)
@@ -39,14 +39,25 @@ bbbee_share = st.sidebar.slider("B-BBEE Redirect (%)", 0, 50, 10)
 tariff_shock = st.sidebar.slider("Avg Tariff Change (%)", -20, 20, 0)
 
 if mode == "Single Year":
-    # Existing Single Year logic
-    results, gdp_effect, revenue, jobs_effect, net_fiscal, actual_budgets, budget_scaled = twin.simulate(
-        new_budgets, base_budgets, envelope, allow_deficit, tax_rate, tariff_shock, bbbee_share
-    )
+    total_proposed = sum(new_budgets.values())
+    actual_budgets = new_budgets.copy()
+    budget_scaled = False
     
+    if total_proposed > envelope:
+        if not allow_deficit:
+            scale_factor = envelope / total_proposed
+            actual_budgets = {k: v * scale_factor for k, v in new_budgets.items()}
+            budget_scaled = True
+
     if budget_scaled:
         st.warning("⚠️ Over Budget! Departments were scaled down to fit the envelope.")
         
+    budget_change = sum(actual_budgets.values()) - total_base
+    gdp_effect, revenue, jobs_effect, results = twin.simulate_year(
+        actual_budgets, base_budgets, tax_rate, tariff_shock, bbbee_share
+    )
+    net_fiscal = revenue - budget_change
+    
     col1, col2, col3, col4 = st.columns(4)
     col1.metric("GDP Effect (mn)", f"{gdp_effect:,.0f}")
     col2.metric("Jobs Created", f"{jobs_effect:,.0f}")
@@ -56,13 +67,11 @@ if mode == "Single Year":
     st.plotly_chart(px.bar(results, x="sector", y="gross_output_zar_mn", color="gross_output_zar_mn", title="Sectoral Impact"), use_container_width=True)
 
 else:
-    # 5-Year Simulation Logic
     st.subheader("5-Year Macroeconomic Projection")
     st.markdown("Notice how persistent deficits accumulate debt, increasing interest payments and eventually crowding out your budget envelope.")
     
     df_history = twin.simulate_5_years(new_budgets, base_budgets, envelope, allow_deficit, tax_rate, tariff_shock, bbbee_share)
     
-    # Line Charts
     col_c1, col_c2 = st.columns(2)
     with col_c1:
         fig_gdp = px.line(df_history, x="Year", y="GDP", markers=True, title="Projected GDP (R Trillion)")
@@ -73,7 +82,6 @@ else:
         
     st.divider()
     
-    # Data Table
     st.markdown("### Year-by-Year Breakdown")
     st.dataframe(
         df_history[["Year", "Actual_Spend_mn", "Interest_Payment_mn", "Net_Fiscal_mn", "Debt", "Jobs_Created"]].style.format({
