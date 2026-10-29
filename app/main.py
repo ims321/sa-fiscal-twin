@@ -10,6 +10,7 @@ from engine.data_loader import load_twin_data, get_supabase
 from engine.model import LeontiefTwin
 from engine.report import generate_pdf
 from engine.live_data import fetch_live_budgets
+from engine.optimizer import find_optimal_policy
 
 st.set_page_config(page_title="SA Macro Twin", layout="wide", initial_sidebar_state="expanded")
 
@@ -32,6 +33,35 @@ def init_engine():
 
 twin = init_engine()
 
+# --- AUTOPILOT SECTION ---
+st.markdown("### 🤖 AI Autopilot")
+st.markdown("Set your macroeconomic targets below, and the AI will search for the optimal combination of taxes and spending to achieve them.")
+col_auto1, col_auto2, col_auto3 = st.columns(3)
+with col_auto1:
+    target_poverty = st.number_input("Target Poverty Rate (%)", min_value=10.0, max_value=50.0, value=28.0, step=1.0)
+with col_auto2:
+    max_debt = st.number_input("Max Debt-to-GDP (%)", min_value=60.0, max_value=100.0, value=75.0, step=1.0)
+with col_auto3:
+    st.write("")
+    st.write("")
+    run_auto = st.button("🚀 Run Autopilot Optimization", use_container_width=True)
+
+if run_auto:
+    with st.spinner("Running 50 simulations to find the optimal policy..."):
+        base_budgets_default = fetch_live_budgets()
+        best_policy = find_optimal_policy(twin, base_budgets_default, sum(base_budgets_default.values()), target_poverty, max_debt)
+        
+        # Save optimal settings to session state so they override the sliders
+        st.session_state.opt_vat = int(best_policy['vat'])
+        st.session_state.opt_cit = int(best_policy['cit'])
+        st.session_state.opt_pit = int(best_policy['pit'])
+        st.session_state.pw_scale = best_policy['pw_scale']
+        st.session_state.edu_scale = best_policy['edu_scale']
+        st.success(f"Optimization Complete! Found policy to achieve {best_policy['resulting_poverty']:.1f}% poverty and {best_policy['resulting_debt']:.1f}% debt.")
+
+st.divider()
+
+# --- SIDEBAR CONTROLS ---
 st.sidebar.header("🏦 Data Source")
 if "base_budgets" not in st.session_state:
     st.session_state.base_budgets = fetch_live_budgets()
@@ -46,9 +76,14 @@ envelope = st.sidebar.number_input("Base Envelope (R mn)", value=sum(base_budget
 allow_deficit = st.sidebar.toggle("Allow Deficit Spending", value=True)
 
 st.sidebar.subheader("💰 Tax Levers")
-vat_rate = st.sidebar.slider("VAT Rate (%)", 10, 25, 15)
-cit_rate = st.sidebar.slider("Corporate Tax (%)", 15, 40, 27)
-pit_rate = st.sidebar.slider("Personal Income Tax (%)", 15, 45, 30)
+# Use session state defaults if autopilot ran
+default_vat = st.session_state.get('opt_vat', 15)
+default_cit = st.session_state.get('opt_cit', 27)
+default_pit = st.session_state.get('opt_pit', 30)
+
+vat_rate = st.sidebar.slider("VAT Rate (%)", 10, 25, default_vat)
+cit_rate = st.sidebar.slider("Corporate Tax (%)", 15, 40, default_cit)
+pit_rate = st.sidebar.slider("Personal Income Tax (%)", 15, 45, default_pit)
 
 st.sidebar.subheader("🏭 Industrial & Trade Policy")
 bbbee_share = st.sidebar.slider("B-BBEE SME Redirect (%)", 0, 50, 10)
@@ -60,6 +95,12 @@ st.subheader("📊 5-Year Budget Allocation (R mn)")
 st.markdown(f"*Baseline loaded from Treasury data. Total Envelope: R {sum(base_budgets.values()):,.0f} mn*")
 
 years = [f"Year {i}" for i in range(1, 6)]
+
+# Apply autopilot budget scaling if it ran
+if 'pw_scale' in st.session_state:
+    base_budgets['Public Works'] = int(base_budgets['Public Works'] * st.session_state.pw_scale)
+    base_budgets['Education'] = int(base_budgets['Education'] * st.session_state.edu_scale)
+
 budget_df = pd.DataFrame([base_budgets for _ in range(5)], index=years)
 
 edited_budget_df = st.data_editor(
@@ -73,11 +114,10 @@ df_baseline = twin.simulate_5_years(baseline_df, base_budgets, sum(base_budgets.
 
 st.divider()
 
-# --- FIXED METRICS (Using Total_Employment instead of Jobs_Created) ---
 col1, col2, col3, col4 = st.columns(4)
 col1.metric("Year 5 GDP", f"R {df_scenario.iloc[-1]['GDP']:.2f} T", delta=f"{(df_scenario.iloc[-1]['GDP'] - df_baseline.iloc[-1]['GDP']):.2f} T vs Baseline")
 col2.metric("Year 5 Debt-to-GDP", f"{df_scenario.iloc[-1]['Debt_to_GDP']:.1f} %", delta=f"{(df_scenario.iloc[-1]['Debt_to_GDP'] - df_baseline.iloc[-1]['Debt_to_GDP']):.1f} % vs Baseline", delta_color="inverse")
-col3.metric("Year 5 Total Employment", f"{df_scenario.iloc[-1]['Total_Employment']:,.0f}", delta=f"{(df_scenario.iloc[-1]['Total_Employment'] - df_baseline.iloc[-1]['Total_Employment']):,.0f} vs Baseline")
+col3.metric("Year 5 Employment", f"{df_scenario.iloc[-1]['Total_Employment']:,.0f}", delta=f"{(df_scenario.iloc[-1]['Total_Employment'] - df_baseline.iloc[-1]['Total_Employment']):,.0f} vs Baseline")
 col4.metric("Year 5 Gini", f"{df_scenario.iloc[-1]['Gini']:.3f}", delta=f"{(df_scenario.iloc[-1]['Gini'] - df_baseline.iloc[-1]['Gini']):.3f} vs Baseline", delta_color="inverse")
 
 col_chart1, col_chart2 = st.columns(2)
@@ -121,7 +161,7 @@ st.plotly_chart(fig_dist, use_container_width=True)
 
 st.divider()
 with st.expander("💾 Save this Scenario to the Database"):
-    scenario_name = st.text_input("Scenario Name", "ABM Scenario")
+    scenario_name = st.text_input("Scenario Name", "Optimized Scenario")
     if st.button("Save to Supabase"):
         supabase = get_supabase()
         if supabase:
