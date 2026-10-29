@@ -47,7 +47,7 @@ def generate_pdf(ai_text, df_scenario, df_baseline, levers):
     pdf.cell(col_width, 8, 'Year', border=1, fill=True, align='C')
     pdf.cell(col_width, 8, 'GDP (R Trillion)', border=1, fill=True, align='C')
     pdf.cell(col_width, 8, 'Debt-to-GDP (%)', border=1, fill=True, align='C')
-    pdf.cell(col_width, 8, 'Jobs Created', border=1, fill=True, align='C')
+    pdf.cell(col_width, 8, 'Total Employment', border=1, fill=True, align='C')
     pdf.cell(col_width, 8, 'Net Fiscal (R mn)', border=1, fill=True, align='C')
     pdf.ln()
     
@@ -56,7 +56,8 @@ def generate_pdf(ai_text, df_scenario, df_baseline, levers):
         pdf.cell(col_width, 8, str(row['Year']), border=1, align='C')
         pdf.cell(col_width, 8, f"{row['GDP']:.2f}", border=1, align='C')
         pdf.cell(col_width, 8, f"{row['Debt_to_GDP']:.1f}%", border=1, align='C')
-        pdf.cell(col_width, 8, f"{row['Jobs_Created']:,.0f}", border=1, align='C')
+        # Changed from Jobs_Created to Total_Employment
+        pdf.cell(col_width, 8, f"{row['Total_Employment']:,.0f}", border=1, align='C')
         pdf.cell(col_width, 8, f"{row['Net_Fiscal_mn']:,.0f}", border=1, align='C')
         pdf.ln()
 
