@@ -9,8 +9,6 @@ class LeontiefTwin:
         self.va = va_ratios.values
         self.sectors = list(sectors)
         self.I = np.eye(self.A.shape[0])
-        
-        # Base Leontief Inverse
         self.base_Leontief_inverse = np.linalg.inv(self.I - self.A)
         
         self.emp_multipliers = {
@@ -24,7 +22,7 @@ class LeontiefTwin:
         self.base_debt_zar_mn = 5_200_000 
         self.interest_rate = 0.10         
         
-    def simulate_year(self, actual_budgets, base_budgets, tax_rate, tariff_shock, bbbee_share, markup_reduction, localization):
+    def simulate_year(self, actual_budgets, base_budgets, vat_rate, cit_rate, pit_rate, tariff_shock, bbbee_share, markup_reduction, localization):
         Y = np.zeros(len(self.sectors))
         dept_to_sector = {
             'Health': 'Government & Social', 'Education': 'Government & Social',
@@ -52,32 +50,49 @@ class LeontiefTwin:
             export_change = 500000 * (tariff_shock / 100) * export_elasticity
             Y[idx] += export_change
             
-        # 3. Competition Policy (Markup reduction boosts real demand)
-        # If markups fall by 1%, it's like a 1% increase in real income for consumers
+        # 3. Competition & Localization
         demand_boost = 1 + (markup_reduction / 100)
         Y = Y * demand_boost
-        
-        # 4. Localization (Increases domestic inter-industry linkages)
-        # If localization is 20%, we scale the A matrix up by 20% (simplistic proxy for import substitution)
         A_modified = self.A * (1 + (localization / 100))
         Leontief_modified = np.linalg.inv(self.I - A_modified)
         
+        # 4. Tax Drag (Base rates: VAT 15%, CIT 27%, PIT 30%)
+        # Raising VAT lowers consumption demand
+        vat_drag = 1 - ((vat_rate - 15) / 100 * 0.5) 
+        # Raising CIT lowers investment demand
+        cit_drag = 1 - ((cit_rate - 27) / 100 * 0.3)
+        # Raising PIT lowers labor supply/consumption
+        pit_drag = 1 - ((pit_rate - 30) / 100 * 0.4)
+        
+        # Apply drags to specific sectors
+        for i, sec in enumerate(self.sectors):
+            if sec in ['Trade', 'Services', 'Business Services', 'Transport']:
+                Y[i] *= vat_drag
+            if sec in ['Finance', 'Manufacturing', 'Construction']:
+                Y[i] *= cit_drag
+            if sec in ['Trade', 'Services', 'Government & Social']:
+                Y[i] *= pit_drag
+
+        # 5. Calculate Output and GDP
         X = Leontief_modified @ Y
         gdp_effect = np.sum(X * self.va)
         jobs_effect = sum(X[i] * self.emp_multipliers.get(sector, 1.0) for i, sector in enumerate(self.sectors))
-        revenue = gdp_effect * (tax_rate / 100)
+        
+        # 6. Calculate Revenue (Simplified tax-to-GDP ratio)
+        # Assume base revenue is R1.5 Trillion, scaled by GDP effect and tax rates
+        base_revenue = 1_500_000
+        revenue_multiplier = ((vat_rate / 15) * 0.3) + ((cit_rate / 27) * 0.2) + ((pit_rate / 30) * 0.5)
+        revenue = (base_revenue + gdp_effect) * revenue_multiplier
         
         return gdp_effect, revenue, jobs_effect, pd.DataFrame({'sector': self.sectors, 'gross_output_zar_mn': X})
 
-    def simulate_5_years(self, budget_matrix, base_budgets, envelope, allow_deficit, tax_rate, tariff_shock, bbbee_share, markup_reduction, localization):
+    def simulate_5_years(self, budget_matrix, base_budgets, envelope, allow_deficit, vat_rate, cit_rate, pit_rate, tariff_shock, bbbee_share, markup_reduction, localization):
         history = []
         current_debt = self.base_debt_zar_mn
         current_gdp = self.base_gdp_zar_mn
         
         for year in range(1, 6):
-            # Get budgets for this specific year from the matrix
             year_budgets = budget_matrix.iloc[year-1].to_dict()
-            
             total_proposed = sum(year_budgets.values())
             actual_budgets = year_budgets.copy()
             budget_scaled = False
@@ -94,7 +109,7 @@ class LeontiefTwin:
             budget_change = total_proposed - sum(base_budgets.values())
             
             gdp_effect, revenue, jobs_effect, _ = self.simulate_year(
-                actual_budgets, base_budgets, tax_rate, tariff_shock, bbbee_share, markup_reduction, localization
+                actual_budgets, base_budgets, vat_rate, cit_rate, pit_rate, tariff_shock, bbbee_share, markup_reduction, localization
             )
             
             net_fiscal = revenue - budget_change
@@ -108,6 +123,7 @@ class LeontiefTwin:
                 "Debt_to_GDP": (current_debt / current_gdp) * 100,
                 "Jobs_Created": jobs_effect,
                 "Net_Fiscal_mn": net_fiscal,
+                "Revenue_mn": revenue,
                 "Interest_Payment_mn": interest_payment,
                 "Actual_Spend_mn": total_proposed
             })
@@ -115,16 +131,23 @@ class LeontiefTwin:
         return pd.DataFrame(history)
 
     def ask_ai_advisor(self, query, scenario_data):
-        """Connects to Omniroute to generate a report or answer questions."""
         base_url = os.getenv("OMNIROUTE_BASE_URL", "http://localhost:20128/v1")
         api_key = os.getenv("OMNIROUTE_API_KEY", "optional")
         
+        final_year = scenario_data.iloc[-1]
+        summary = f"""
+        - Year 5 GDP: R {final_year['GDP']:.2f} Trillion
+        - Year 5 Debt-to-GDP: {final_year['Debt_to_GDP']:.1f}%
+        - Total Jobs Created (5 Years): {scenario_data['Jobs_Created'].sum():,.0f}
+        - Year 5 Net Fiscal Balance: R {final_year['Net_Fiscal_mn']:,.0f} million
+        """
+        
         system_prompt = f"""
         You are a Chief Economist advising the South African National Treasury.
-        Here is the current macroeconomic simulation data based on the user's policy levers:
-        {scenario_data.to_string()}
+        Here is the final 5-year macroeconomic simulation data based on the policy changes:
+        {summary}
         
-        Answer the user's question professionally, focusing on trade-offs between GDP, Debt, and Jobs. Keep it concise.
+        Answer the user's question professionally. Keep it concise (under 250 words).
         """
         
         try:
@@ -143,4 +166,4 @@ class LeontiefTwin:
             )
             return response.json()["choices"][0]["message"]["content"]
         except Exception as e:
-            return f"AI Advisor unavailable. Ensure Omniroute is running. Error: {e}"
+            return f"AI Advisor unavailable. Error: {e}"
