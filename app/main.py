@@ -1,3 +1,8 @@
+import sys
+import os
+# This tells Python to look in the root folder for the 'engine' directory
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
 import streamlit as st
 import pandas as pd
 import plotly.express as px
@@ -38,13 +43,11 @@ results, gdp_effect, revenue, jobs_effect, net_fiscal, actual_budgets, budget_sc
     new_budgets, base_budgets, envelope, allow_deficit, tax_rate, tariff_shock, bbbee_share
 )
 
-# Warnings and Status
 if budget_scaled:
     st.warning(f"⚠️ Over Budget! Your proposed spending was R{sum(new_budgets.values()):,.0f} mn. To fit the R{envelope:,.0f} mn envelope, all departments were scaled down by {(1 - (envelope / sum(new_budgets.values()))) * 100:.1f}%.")
 elif allow_deficit and sum(new_budgets.values()) > envelope:
     st.info(f"📈 Deficit Spending Active: You are spending R{sum(new_budgets.values()) - envelope:,.0f} mn more than the envelope. This will increase government debt.")
 
-# Top Metrics
 col1, col2, col3, col4 = st.columns(4)
 budget_change = sum(actual_budgets.values()) - total_base
 col1.metric("Actual Budget Change", f"{budget_change:,.0f} mn")
@@ -64,7 +67,6 @@ with col_chart1:
     st.plotly_chart(fig, use_container_width=True)
 
 with col_chart2:
-    # Use actual_budgets (post-scaling) for the pie chart so the UI reflects reality
     budget_df = pd.DataFrame(list(actual_budgets.items()), columns=['Department', 'Budget'])
     fig_pie = px.pie(budget_df, values='Budget', names='Department', title="Actual Budget Allocation (Post-Scaling)")
     st.plotly_chart(fig_pie, use_container_width=True)
