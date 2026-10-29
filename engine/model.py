@@ -16,34 +16,16 @@ class LeontiefTwin:
             'Government & Social': 3.8
         }
         
-    def simulate(self, proposed_budgets, base_budgets, envelope, allow_deficit, tax_rate, tariff_shock, bbbee_share):
-        # --- 1. BUDGET ENVELOPE LOGIC ---
-        total_proposed = sum(proposed_budgets.values())
-        total_base = sum(base_budgets.values())
+        # Macro baselines for South Africa
+        self.base_gdp_zar_mn = 7_000_000  # R7 Trillion
+        self.base_debt_zar_mn = 5_200_000 # R5.2 Trillion
+        self.interest_rate = 0.10         # 10% average cost of debt
         
-        actual_budgets = proposed_budgets.copy()
-        budget_scaled = False
-        
-        if total_proposed > envelope:
-            if allow_deficit:
-                pass # Let them spend over the envelope
-            else:
-                # Scale down proportionally to fit the envelope
-                scale_factor = envelope / total_proposed
-                actual_budgets = {k: v * scale_factor for k, v in proposed_budgets.items()}
-                total_proposed = envelope
-                budget_scaled = True
-                
-        budget_change = total_proposed - total_base
-        
-        # --- 2. SHOCK VECTOR (Y) ---
+    def simulate_year(self, actual_budgets, base_budgets, tax_rate, tariff_shock, bbbee_share):
         Y = np.zeros(len(self.sectors))
-        
         dept_to_sector = {
-            'Health': 'Government & Social',
-            'Education': 'Government & Social',
-            'Public Works': 'Construction',
-            'Trade and Industry': 'Business Services',
+            'Health': 'Government & Social', 'Education': 'Government & Social',
+            'Public Works': 'Construction', 'Trade and Industry': 'Business Services',
             'Small Business Development': 'Business Services'
         }
         
@@ -59,21 +41,65 @@ class LeontiefTwin:
             else:
                 Y[idx] += delta
         
-        # Tariff effect
         export_elasticity = -1.30
         for sec in ['Agriculture', 'Mining', 'Manufacturing']:
             idx = self.sectors.index(sec)
             export_change = 500000 * (tariff_shock / 100) * export_elasticity
             Y[idx] += export_change
         
-        # --- 3. LEONTIEF MATH ---
         X = self.Leontief_inverse @ Y
         gdp_effect = np.sum(X * self.va)
-        
         jobs_effect = sum(X[i] * self.emp_multipliers.get(sector, 1.0) for i, sector in enumerate(self.sectors))
         revenue = gdp_effect * (tax_rate / 100)
-        net_fiscal = revenue - budget_change
         
-        results = pd.DataFrame({'sector': self.sectors, 'gross_output_zar_mn': X})
+        return gdp_effect, revenue, jobs_effect, pd.DataFrame({'sector': self.sectors, 'gross_output_zar_mn': X})
+
+    def simulate_5_years(self, proposed_budgets, base_budgets, envelope, allow_deficit, tax_rate, tariff_shock, bbbee_share):
+        history = []
+        current_debt = self.base_debt_zar_mn
         
-        return results, gdp_effect, revenue, jobs_effect, net_fiscal, actual_budgets, budget_scaled
+        # Assume a baseline GDP growth of 1.5% per year even without shocks
+        current_gdp = self.base_gdp_zar_mn
+        
+        for year in range(1, 6):
+            total_proposed = sum(proposed_budgets.values())
+            actual_budgets = proposed_budgets.copy()
+            budget_scaled = False
+            
+            # Deduct interest payments from the envelope for years > 1
+            interest_payment = current_debt * self.interest_rate if year > 1 else 0
+            effective_envelope = envelope - interest_payment
+            
+            if total_proposed > effective_envelope:
+                if allow_deficit:
+                    pass
+                else:
+                    scale_factor = effective_envelope / total_proposed if total_proposed > 0 else 1
+                    actual_budgets = {k: v * scale_factor for k, v in proposed_budgets.items()}
+                    total_proposed = effective_envelope
+                    budget_scaled = True
+            
+            budget_change = total_proposed - sum(base_budgets.values())
+            gdp_effect, revenue, jobs_effect, sector_df = self.simulate_year(
+                actual_budgets, base_budgets, tax_rate, tariff_shock, bbbee_share
+            )
+            
+            net_fiscal = revenue - budget_change
+            
+            # Update debt and GDP for next year
+            current_debt -= net_fiscal 
+            current_gdp = current_gdp * 1.015 + gdp_effect 
+            
+            history.append({
+                "Year": f"Year {year}",
+                "GDP": current_gdp / 1_000_000, # In Trillions
+                "Debt": current_debt / 1_000_000, # In Trillions
+                "Debt_to_GDP": (current_debt / current_gdp) * 100,
+                "Jobs_Created": jobs_effect,
+                "Net_Fiscal_mn": net_fiscal,
+                "Interest_Payment_mn": interest_payment,
+                "Budget_Scaled": budget_scaled,
+                "Actual_Spend_mn": total_proposed
+            })
+            
+        return pd.DataFrame(history)
