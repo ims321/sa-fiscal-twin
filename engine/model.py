@@ -139,7 +139,7 @@ class LeontiefTwin:
                     ],
                     "temperature": 0.3
                 },
-                timeout=30
+                timeout=120
             )
             return response.json()["choices"][0]["message"]["content"]
         except Exception as e:
