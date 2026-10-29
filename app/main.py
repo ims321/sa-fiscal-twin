@@ -9,6 +9,7 @@ import plotly.graph_objects as go
 from engine.data_loader import load_twin_data, get_supabase
 from engine.model import LeontiefTwin
 from engine.report import generate_pdf
+from engine.live_data import fetch_live_budgets
 
 st.set_page_config(page_title="SA Macro Twin", layout="wide", initial_sidebar_state="expanded")
 
@@ -22,7 +23,7 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 st.title("🇿🇦 South Africa Macroeconomic Twin")
-st.caption("Macro-Fiscal Simulation with Household Microsimulation")
+st.caption("Macro-Fiscal Simulation with Live Treasury Data & Microsimulation")
 
 @st.cache_resource
 def init_engine():
@@ -30,9 +31,19 @@ def init_engine():
     return LeontiefTwin(A, va, sectors)
 
 twin = init_engine()
-base_budgets = {'Health': 250000, 'Education': 300000, 'Public Works': 40000, 
-                'Trade and Industry': 10000, 'Small Business Development': 5000}
 
+# --- FETCH LIVE DATA ---
+st.sidebar.header("🏦 Data Source")
+if "base_budgets" not in st.session_state:
+    st.session_state.base_budgets = fetch_live_budgets()
+
+if st.sidebar.button("🔄 Refresh Treasury Data"):
+    st.session_state.base_budgets = fetch_live_budgets()
+    st.rerun()
+
+base_budgets = st.session_state.base_budgets
+
+# --- SIDEBAR CONTROLS ---
 st.sidebar.header("⚙️ Fiscal Rules")
 envelope = st.sidebar.number_input("Base Envelope (R mn)", value=sum(base_budgets.values()), step=10000)
 allow_deficit = st.sidebar.toggle("Allow Deficit Spending", value=True)
@@ -49,6 +60,8 @@ markup_reduction = st.sidebar.slider("Competition Markup Reduction (%)", 0, 20, 
 localization = st.sidebar.slider("Localization / Import Substitution (%)", 0, 50, 0)
 
 st.subheader("📊 5-Year Budget Allocation (R mn)")
+st.markdown(f"*Baseline loaded from Treasury data. Total Envelope: R {sum(base_budgets.values()):,.0f} mn*")
+
 years = [f"Year {i}" for i in range(1, 6)]
 budget_df = pd.DataFrame([base_budgets for _ in range(5)], index=years)
 
@@ -84,7 +97,6 @@ with col_chart2:
     fig_debt.update_layout(title="Debt-to-GDP Ratio (%)", template="plotly_white")
     st.plotly_chart(fig_debt, use_container_width=True)
 
-# --- MICROSIM CHART ---
 st.divider()
 st.subheader("🏘️ Household Income Distribution (Microsimulation)")
 income_df = twin.microsim.households[['current_income']]
@@ -94,7 +106,7 @@ st.plotly_chart(fig_dist, use_container_width=True)
 
 st.divider()
 with st.expander("💾 Save this Scenario to the Database"):
-    scenario_name = st.text_input("Scenario Name", "Microsim Scenario")
+    scenario_name = st.text_input("Scenario Name", "Live Data Scenario")
     if st.button("Save to Supabase"):
         supabase = get_supabase()
         if supabase:
