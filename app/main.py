@@ -8,7 +8,7 @@ import plotly.express as px
 import plotly.graph_objects as go
 import copy
 from engine.data_loader import load_twin_data, get_supabase
-from engine.model import LeontiefTwin
+from engine.model import LeontiefTwin, flatten_dict
 from engine.live_data import fetch_live_budgets
 from engine.report import generate_pdf
 from engine.optimizer import find_optimal_policy
@@ -34,7 +34,8 @@ def init_engine():
 twin = init_engine()
 
 if "base_budgets" not in st.session_state:
-    st.session_state.base_budgets = fetch_live_budgets()
+    with st.spinner("Fetching official Treasury data..."):
+        st.session_state.base_budgets = fetch_live_budgets()
     st.session_state.scenario_budgets = copy.deepcopy(st.session_state.base_budgets)
 
 base_budgets = st.session_state.base_budgets
@@ -73,9 +74,11 @@ if sphere_select == "National":
     dept_select = st.selectbox("Select National Department", list(scenario_budgets['national'].keys()))
     dept_data = scenario_budgets['national'][dept_select]
     
-    budget_df = pd.DataFrame(list(dept_data.items()), columns=["Programme", "Year 1"])
+    flat_dept = flatten_dict(dept_data)
+    budget_df = pd.DataFrame(list(flat_dept.items()), columns=["Programme / Sub-Programme", "Year 1"])
     for i in range(2, 6): budget_df[f"Year {i}"] = budget_df["Year 1"]
-    budget_df.set_index("Programme", inplace=True)
+    budget_df.set_index("Programme / Sub-Programme", inplace=True)
+    
     edited_df = st.data_editor(budget_df, use_container_width=True, num_rows="fixed", key=f"nat_{dept_select}")
     scenario_budgets['national'][dept_select] = edited_df["Year 1"].to_dict()
 
@@ -84,9 +87,11 @@ elif sphere_select == "Provincial":
     dept_select = st.selectbox("Select Provincial Department", list(scenario_budgets['provincial'][province].keys()))
     dept_data = scenario_budgets['provincial'][province][dept_select]
     
-    budget_df = pd.DataFrame(list(dept_data.items()), columns=["Programme", "Year 1"])
+    flat_dept = flatten_dict(dept_data)
+    budget_df = pd.DataFrame(list(flat_dept.items()), columns=["Programme / Sub-Programme", "Year 1"])
     for i in range(2, 6): budget_df[f"Year {i}"] = budget_df["Year 1"]
-    budget_df.set_index("Programme", inplace=True)
+    budget_df.set_index("Programme / Sub-Programme", inplace=True)
+    
     edited_df = st.data_editor(budget_df, use_container_width=True, num_rows="fixed", key=f"prov_{province}_{dept_select}")
     scenario_budgets['provincial'][province][dept_select] = edited_df["Year 1"].to_dict()
 
@@ -113,9 +118,11 @@ else: # Local
         mun_data[rev_item] *= (collection_rate / 100)
             
     st.markdown(f"### 📊 {mun_select} Budget (R millions)")
-    budget_df = pd.DataFrame(list(mun_data.items()), columns=["Function", "Year 1"])
+    flat_mun = flatten_dict(mun_data)
+    budget_df = pd.DataFrame(list(flat_mun.items()), columns=["Function", "Year 1"])
     for i in range(2, 6): budget_df[f"Year {i}"] = budget_df["Year 1"]
     budget_df.set_index("Function", inplace=True)
+    
     edited_df = st.data_editor(budget_df, use_container_width=True, num_rows="fixed", key=f"mun_{cat_select}_{mun_select}")
     scenario_budgets['local'][cat_select][mun_select] = edited_df["Year 1"].to_dict()
 
