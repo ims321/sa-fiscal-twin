@@ -34,8 +34,7 @@ def init_engine():
 twin = init_engine()
 
 if "base_budgets" not in st.session_state:
-    with st.spinner("Fetching official Treasury data..."):
-        st.session_state.base_budgets = fetch_live_budgets()
+    st.session_state.base_budgets = fetch_live_budgets()
     st.session_state.scenario_budgets = copy.deepcopy(st.session_state.base_budgets)
 
 base_budgets = st.session_state.base_budgets
@@ -88,9 +87,9 @@ elif sphere_select == "Provincial":
     dept_data = scenario_budgets['provincial'][province][dept_select]
     
     flat_dept = flatten_dict(dept_data)
-    budget_df = pd.DataFrame(list(flat_dept.items()), columns=["Programme / Sub-Programme", "Year 1"])
+    budget_df = pd.DataFrame(list(flat_dept.items()), columns=["Programme", "Year 1"])
     for i in range(2, 6): budget_df[f"Year {i}"] = budget_df["Year 1"]
-    budget_df.set_index("Programme / Sub-Programme", inplace=True)
+    budget_df.set_index("Programme", inplace=True)
     
     edited_df = st.data_editor(budget_df, use_container_width=True, num_rows="fixed", key=f"prov_{province}_{dept_select}")
     scenario_budgets['provincial'][province][dept_select] = edited_df["Year 1"].to_dict()
@@ -108,20 +107,23 @@ else: # Local
     with col_m2: rate_increase = st.slider("Property Rate Increase (%)", 0.0, 20.0, 5.0, step=0.5)
     with col_m3: collection_rate = st.slider("Collection Rate (%)", 70.0, 100.0, 90.0, step=1.0)
         
-    for rev_item in mun_data:
-        if 'Electricity' in rev_item or 'Water' in rev_item or 'Sanitation' in rev_item or 'Refuse' in rev_item:
-            mun_data[rev_item] = base_mun_data.get(rev_item, 0) * (1 + tariff_increase / 100)
-        elif 'Property Rates' in rev_item:
-            mun_data[rev_item] = base_mun_data.get(rev_item, 0) * (1 + rate_increase / 100)
-        else:
-            mun_data[rev_item] = base_mun_data.get(rev_item, 0)
-        mun_data[rev_item] *= (collection_rate / 100)
+    for data_type in ['Revenue', 'Expenditure']:
+        if data_type in mun_data:
+            for rev_item in mun_data[data_type]:
+                if 'Electricity' in rev_item or 'Water' in rev_item or 'Sanitation' in rev_item or 'Refuse' in rev_item:
+                    mun_data[data_type][rev_item] = base_mun_data[data_type].get(rev_item, 0) * (1 + tariff_increase / 100)
+                elif 'Property Rates' in rev_item:
+                    mun_data[data_type][rev_item] = base_mun_data[data_type].get(rev_item, 0) * (1 + rate_increase / 100)
+                else:
+                    mun_data[data_type][rev_item] = base_mun_data[data_type].get(rev_item, 0)
+                if data_type == 'Revenue':
+                    mun_data[data_type][rev_item] *= (collection_rate / 100)
             
     st.markdown(f"### 📊 {mun_select} Budget (R millions)")
     flat_mun = flatten_dict(mun_data)
-    budget_df = pd.DataFrame(list(flat_mun.items()), columns=["Function", "Year 1"])
+    budget_df = pd.DataFrame(list(flat_mun.items()), columns=["Revenue / Expenditure Item", "Year 1"])
     for i in range(2, 6): budget_df[f"Year {i}"] = budget_df["Year 1"]
-    budget_df.set_index("Function", inplace=True)
+    budget_df.set_index("Revenue / Expenditure Item", inplace=True)
     
     edited_df = st.data_editor(budget_df, use_container_width=True, num_rows="fixed", key=f"mun_{cat_select}_{mun_select}")
     scenario_budgets['local'][cat_select][mun_select] = edited_df["Year 1"].to_dict()
